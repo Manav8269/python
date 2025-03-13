@@ -17,28 +17,23 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set Up Java (for SonarQube)
+      - name: Set Up Java
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set Up Python (if scanning Python code)
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: Start SonarQube (For Self-Hosted Only)
+      - name: Start SonarQube (If Self-Hosted)
         if: env.SONAR_HOST_URL == 'http://localhost:9000'
         run: |
           docker run -d --name sonar -p 9000:9000 sonarqube:lts
           echo "Waiting for SonarQube to start..."
-          sleep 60  # Ensure SonarQube is up before scanning
+          sleep 90  # Increase wait time if needed
 
       - name: Install SonarScanner
         run: |
-          curl -Lo sonar-scanner-cli.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
-          unzip sonar-scanner-cli.zip
+          curl -Lo sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+          unzip sonar-scanner.zip
           echo "$(pwd)/sonar-scanner-5.0.1.3006-linux/bin" >> $GITHUB_PATH
 
       - name: Run SonarQube Scan
