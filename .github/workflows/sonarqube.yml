@@ -1,53 +1,46 @@
-name: SonarQube Scan
+name: SonarQube Code Analysis
 
 on:
   push:
     branches:
       - main
+      - develop
   pull_request:
     branches:
       - main
 
 jobs:
-  sonarqube:
-    name: SonarQube Analysis
+  sonar:
+    name: SonarQube Scan
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set Up Java
+      - name: Set up JDK 17
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Start SonarQube (If Self-Hosted)
-        if: env.SONAR_HOST_URL == 'http://localhost:9000'
-        run: |
-          docker run -d --name sonar -p 9000:9000 sonarqube:lts
-          echo "Waiting for SonarQube to start..."
-          sleep 90  # Increase wait time if needed
+      - name: Cache SonarQube packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
 
-      - name: Install SonarScanner
-        run: |
-          curl -Lo sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
-          unzip sonar-scanner.zip
-          echo "$(pwd)/sonar-scanner-5.0.1.3006-linux/bin" >> $GITHUB_PATH
+      - name: Build Project (for Java/Maven projects)
+        run: mvn clean verify
 
-      - name: Run SonarQube Scan
+      - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_HOST_URL: "http://localhost:9000"
         run: |
-          sonar-scanner \
-            -Dsonar.projectKey=your_project_key \
-            -Dsonar.sources=. \
+          mvn sonar:sonar \
+            -Dsonar.projectKey=your-project-key \
+            -Dsonar.organization=your-org \
             -Dsonar.host.url=$SONAR_HOST_URL \
             -Dsonar.login=$SONAR_TOKEN
-
-      - name: SonarQube Quality Gate Check
-        uses: sonarsource/sonarqube-quality-gate-action@master
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
