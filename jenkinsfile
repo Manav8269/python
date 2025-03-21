@@ -1,0 +1,69 @@
+pipeline {
+    agent any
+
+    environment {
+        SONAR_HOST_URL = 'http://sonarqube:9000'  // Update if needed
+        SONAR_TOKEN = credentials('sonarqube-token') // Store token in Jenkins credentials
+    }
+
+    stages {
+        stage('Checkout Repository') {
+            steps {
+                git 'https://github.com/Manav8269/python.git'
+            }
+        }
+
+        stage('Set up Python') {
+            steps {
+                sh 'python3 -m venv venv'
+                sh 'source venv/bin/activate'
+                sh 'pip install -r requirements.txt || echo "No requirements file found"'
+            }
+        }
+
+        stage('Run Tests & Collect Coverage') {
+            steps {
+                sh 'source venv/bin/activate && coverage run -m unittest discover'
+                sh 'source venv/bin/activate && coverage report -m'
+                sh 'source venv/bin/activate && coverage xml -o coverage.xml'
+            }
+        }
+
+        stage('SonarQube Scan') {
+            steps {
+                withSonarQubeEnv('SonarQube') { 
+                    sh '''
+                        sonar-scanner \
+                        -Dsonar.projectKey=your-project-key \
+                        -Dsonar.sources=. \
+                        -Dsonar.host.url=$SONAR_HOST_URL \
+                        -Dsonar.login=$SONAR_TOKEN \
+                        -Dsonar.python.coverage.reportPaths=coverage.xml
+                    '''
+                }
+            }
+        }
+
+        stage('Quality Gate Check') {
+            steps {
+                script {
+                    timeout(time: 2, unit: 'MINUTES') {
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK') {
+                            error "Pipeline failed due to quality gate failure: ${qg.status}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'SonarQube scan completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed!'
+        }
+    }
+}
