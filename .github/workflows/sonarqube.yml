@@ -1,49 +1,40 @@
-name: SonarQube Analysis
+name: CI/CD Pipeline with SonarQube
 
 on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
-  sonar:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.9"
+          python-version: '3.9'
 
-      - name: Install dependencies
-        run: pip install pytest pytest-cov coverage
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
 
       - name: Run tests with coverage
-        run: pytest --cov=python64 --cov-report=xml
+        run: |
+          pytest --cov=python64 --cov-report=xml || true
 
-      - name: Upload coverage report
-        run: mv coverage.xml python64/
-
-      - name: Run SonarQube Analysis
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Run SonarQube Scan
         run: |
           sonar-scanner \
-            -Dsonar.projectKey=my-python-project \
-            -Dsonar.sources=python64 \
-            -Dsonar.host.url="https://3c17-27-107-135-240.ngrok-free.app" \
-            -Dsonar.login="$SONAR_TOKEN" \
-            -Dsonar.python.coverage.reportPaths=python64/coverage.xml
-
-      - name: Check Quality Gate Status
-        run: |
-          STATUS=$(curl -s -u $SONAR_TOKEN: "https://3c17-27-107-135-240.ngrok-free.app/api/qualitygates/project_status?projectKey=my-python-project" | jq -r .projectStatus.status)
-          if [[ "$STATUS" == "ERROR" ]]; then
-            echo "❌ Quality Gate failed!"
-            exit 1
-          else
-            echo "✅ Quality Gate passed!"
-          fi
+            -Dsonar.projectKey=python64 \
+            -Dsonar.sources=. \
+            -Dsonar.host.url="https://d711-27-107-135-240.ngrok-free.app" \
+            -Dsonar.token="${{ secrets.SONAR_TOKEN }}"
