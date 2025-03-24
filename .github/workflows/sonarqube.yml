@@ -22,7 +22,7 @@ jobs:
         run: pip install pytest pytest-cov coverage
 
       - name: Run tests with coverage
-        run: pytest --cov=<your_project_folder> --cov-report=xml
+        run: pytest --cov=python64--cov-report=xml
 
       - name: Run SonarQube Analysis
         env:
