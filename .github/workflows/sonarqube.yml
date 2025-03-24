@@ -37,7 +37,7 @@ jobs:
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: "https://cd93-27-107-135-240.ngrok-free.app"  # Change if using SonarCloud
+          SONAR_HOST_URL: "https://b52c-27-107-135-240.ngrok-free.app"  # Change if using SonarCloud
         run: |
           sonar-scanner \
             -Dsonar.projectKey=your-project-key \
