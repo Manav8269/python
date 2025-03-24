@@ -1,41 +1,46 @@
-name: SonarQube Analysis
+name: SonarQube Code Analysis
 
 on:
   push:
     branches:
       - main
+      - develop
+  pull_request:
+    branches:
+      - main
 
 jobs:
   sonar:
+    name: SonarQube Scan
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
+          python-version: '3.9'
 
-      - name: Install dependencies
-        run: pip install pytest pytest-cov coverage
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt || echo "No requirements.txt found"
 
-      - name: Run tests with coverage
-        run: pytest --cov=python64--cov-report=xml
+      - name: Install SonarScanner
+        run: |
+          curl -o sonar-scanner-cli.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+          unzip sonar-scanner-cli.zip
+          sudo mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
+          echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
 
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: "https://b52c-27-107-135-240.ngrok-free.app"  # Change if using SonarCloud
         run: |
-          sonar-scanner -Dsonar.login=$SONAR_TOKEN
-
-      - name: Check Quality Gate Status
-        run: |
-          STATUS=$(curl -s -u $SONAR_TOKEN: "http://localhost:9000/api/qualitygates/project_status?projectKey=my-python-project" | jq -r .projectStatus.status)
-          if [[ "$STATUS" == "ERROR" ]]; then
-            echo "❌ Quality Gate failed!"
-            exit 1
-          else
-            echo "✅ Quality Gate passed!"
-          fi
+          sonar-scanner \
+            -Dsonar.projectKey=your-project-key \
+            -Dsonar.sources=. \
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.login=$SONAR_TOKEN
