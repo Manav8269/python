@@ -24,5 +24,5 @@ jobs:
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v4
         env:
-          SONAR_TOKEN: ${{ sqa_68bb46cc91a11dec50737e1eb7397f5fa834c35e }}
-          SONAR_HOST_URL: ${https://b52c-27-107-135-240.ngrok-free.app}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
