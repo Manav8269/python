@@ -17,24 +17,34 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install pytest pytest-cov
 
-      - name: Run tests with coverage
+      - name: Run Tests with Coverage
         run: |
-          pytest --cov=python64 --cov-report=xml || true
+          pytest --cov=python64 --cov-report=xml
 
-      - name: Run SonarQube Scan
-        run: |
-          sonar-scanner \
-            -Dsonar.projectKey=python64 \
-            -Dsonar.sources=. \
-            -Dsonar.host.url="https://d711-27-107-135-240.ngrok-free.app" \
-            -Dsonar.token="${{ secrets.SONAR_TOKEN }}"
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_HOST_URL: "https://d711-27-107-135-240.ngrok-free.app"
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: SonarQube Quality Gate
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        env:
+          SONAR_HOST_URL: "https://d711-27-107-135-240.ngrok-free.app"
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
