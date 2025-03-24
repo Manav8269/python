@@ -28,7 +28,7 @@ jobs:
 
       - name: Run Tests & Generate Coverage Report
         run: |
-          pytest --cov=python64 --cov-report=xml || echo "Tests failed, continuing with pipeline"
+          pytest --cov=python --cov-report=xml || echo "Tests failed, continuing with pipeline"
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v4
@@ -37,7 +37,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
-            -Dsonar.projectKey=python64
+            -Dsonar.projectKey=python
             -Dsonar.sources=.
             -Dsonar.host.url=${{ env.SONAR_HOST_URL }}
             -Dsonar.python.coverage.reportPaths=coverage.xml
