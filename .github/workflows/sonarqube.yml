@@ -34,13 +34,13 @@ jobs:
           sonar-scanner \
             -Dsonar.projectKey=my-python-project \
             -Dsonar.sources=python64 \
-            -Dsonar.host.url="https://b52c-27-107-135-240.ngrok-free.app" \
+            -Dsonar.host.url="https://3c17-27-107-135-240.ngrok-free.app" \
             -Dsonar.login="$SONAR_TOKEN" \
             -Dsonar.python.coverage.reportPaths=python64/coverage.xml
 
       - name: Check Quality Gate Status
         run: |
-          STATUS=$(curl -s -u $SONAR_TOKEN: "https://b52c-27-107-135-240.ngrok-free.app/api/qualitygates/project_status?projectKey=my-python-project" | jq -r .projectStatus.status)
+          STATUS=$(curl -s -u $SONAR_TOKEN: "https://3c17-27-107-135-240.ngrok-free.app/api/qualitygates/project_status?projectKey=my-python-project" | jq -r .projectStatus.status)
           if [[ "$STATUS" == "ERROR" ]]; then
             echo "❌ Quality Gate failed!"
             exit 1
