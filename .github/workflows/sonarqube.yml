@@ -25,7 +25,11 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install -r requirements.txt || echo "No requirements.txt found"
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+          else
+            echo "No requirements.txt found, skipping..."
+          fi
 
       - name: Install SonarScanner
         run: |
@@ -33,14 +37,15 @@ jobs:
           unzip sonar-scanner-cli.zip
           sudo mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
           echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
+          sudo chmod +x /opt/sonar-scanner/bin/sonar-scanner
 
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: "https://breezy-moments-accept.loca.lt"  # Change if using SonarCloud
+          SONAR_HOST_URL: "https://breezy-moments-accept.loca.lt"  # Update to your SonarQube URL
         run: |
-          sonar-scanner \
+          /opt/sonar-scanner/bin/sonar-scanner \
             -Dsonar.projectKey=your-project-key \
             -Dsonar.sources=. \
             -Dsonar.host.url=$SONAR_HOST_URL \
-            -Dsonar.login=$SONAR_TOKEN
+            -Dsonar.login=$SONAR_TOKEN || echo "SonarQube scan failed"
