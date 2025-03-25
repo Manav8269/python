@@ -26,6 +26,12 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install -r requirements.txt || echo "No requirements.txt found"
+          pip install pytest coverage  # Install test & coverage tools
+
+      - name: Run Tests with Coverage
+        run: |
+          coverage run -m pytest  # Runs tests and collects coverage data
+          coverage xml -o coverage.xml  # Generates an XML report for SonarQube
 
       - name: Install SonarScanner
         run: |
@@ -43,4 +49,5 @@ jobs:
             -Dsonar.projectKey=your-project-key \
             -Dsonar.sources=. \
             -Dsonar.host.url=$SONAR_HOST_URL \
-            -Dsonar.login=$SONAR_TOKEN
+            -Dsonar.login=$SONAR_TOKEN \
+            -Dsonar.python.coverage.reportPaths=coverage.xml
