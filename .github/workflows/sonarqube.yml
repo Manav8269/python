@@ -41,11 +41,17 @@ jobs:
           npm install
 
       - name: Run Tests with Coverage
-        continue-on-error: true  # Ensures the workflow continues even if tests fail
         run: |
           cd $PROJECT_DIR
-          npm test -- --coverage --watchAll=false || echo "Tests failed, continuing..."
+          npm test -- --coverage --watchAll=false
           mv coverage/lcov.info coverage.xml || echo "No coverage report found, skipping move."
+          if [ -f "coverage/coverage-summary.json" ]; then \
+            COVERAGE=$(node -e "console.log(require('./coverage/coverage-summary.json').total.statements.pct)"); \
+            echo "Test Coverage: $COVERAGE%"; \
+            if (( $(echo "$COVERAGE < 80" | bc -l) )); then echo "Error: Coverage below 80%" && exit 1; fi; \
+          else \
+            echo "Warning: coverage-summary.json not found, skipping coverage check"; \
+          fi
 
       - name: Install SonarScanner
         run: |
@@ -65,4 +71,5 @@ jobs:
             -Dsonar.sources=. \
             -Dsonar.host.url=$SONAR_HOST_URL \
             -Dsonar.login=$SONAR_TOKEN \
-            -Dsonar.javascript.lcov.reportPaths=coverage.xml
+            -Dsonar.javascript.lcov.reportPaths=coverage.xml \
+            -Dsonar.inclusions=**/*.{js,jsx,html,css}  # Scan all JS, JSX, HTML, and CSS files
