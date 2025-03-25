@@ -17,6 +17,11 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Ensures all branches and history are fetched
+
+      - name: Debug Repository Files
+        run: ls -R
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,10 +29,13 @@ jobs:
           node-version: '18'
 
       - name: Install Dependencies
-        run: npm install
+        run: |
+          cd your-react-project-folder  # Change this to your actual React project folder
+          npm install
 
       - name: Run Tests with Coverage
         run: |
+          cd your-react-project-folder
           npm test -- --coverage --watchAll=false
           mv coverage/lcov.info coverage.xml  # Convert coverage report for SonarQube
 
@@ -43,6 +51,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: "https://4bfd-27-107-135-240.ngrok-free.app"
         run: |
+          cd your-react-project-folder
           sonar-scanner \
             -Dsonar.projectKey=your-project-key \
             -Dsonar.sources=. \
