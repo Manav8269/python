@@ -35,6 +35,13 @@ jobs:
           coverage run -m pytest || echo "Tests failed but continuing..."
           coverage xml -o coverage.xml
 
+      - name: Install SonarScanner
+        run: |
+          curl -sSLo sonarqube.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+          unzip sonarqube.zip
+          mv sonar-scanner-5.0.1.3006-linux sonar-scanner
+          echo "$(pwd)/sonar-scanner/bin" >> $GITHUB_PATH
+
       - name: SonarQube Scan
         run: |
           sonar-scanner \
