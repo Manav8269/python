@@ -18,48 +18,19 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 🟠 Setup for Django (Python)
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.9'
-
-      - name: Install Python Dependencies
-        run: |
-          pip install -r requirements.txt || echo "No requirements.txt found"
-          pip install pytest coverage  # Install test & coverage tools
-
-      - name: Run Django Tests with Coverage
-        continue-on-error: true
-        run: |
-          export PYTHONPATH=$PYTHONPATH:$(pwd)
-          pytest --continue-on-collection-errors || true
-          coverage run -m pytest || echo "Tests failed, but continuing..."
-          coverage xml -o coverage.xml  # Generates XML report
-
-      # 🟢 Setup for Node.js (React & Backend)
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
 
-      - name: Install Node.js Dependencies
-        run: |
-          if [ -f "package.json" ]; then
-            npm install
-          else
-            echo "No package.json found, skipping Node.js setup."
-          fi
+      - name: Install Dependencies
+        run: npm install
 
-      - name: Run React & Node.js Tests with Coverage
-        continue-on-error: true
+      - name: Run Tests with Coverage
         run: |
-          if [ -f "package.json" ]; then
-            npm test -- --coverage || echo "Tests failed, but continuing..."
-            mv coverage/lcov.info coverage/lcov-node.info || echo "No Node.js coverage report found."
-          fi
+          npm test -- --coverage --watchAll=false
+          mv coverage/lcov.info coverage.xml  # Convert coverage report for SonarQube
 
-      # 🔵 Install & Run SonarScanner
       - name: Install SonarScanner
         run: |
           curl -o sonar-scanner-cli.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
@@ -70,12 +41,11 @@ jobs:
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: "https://4bfd-27-107-135-240.ngrok-free.app "
+          SONAR_HOST_URL: "https://4bfd-27-107-135-240.ngrok-free.app"
         run: |
           sonar-scanner \
             -Dsonar.projectKey=your-project-key \
             -Dsonar.sources=. \
             -Dsonar.host.url=$SONAR_HOST_URL \
             -Dsonar.login=$SONAR_TOKEN \
-            -Dsonar.python.coverage.reportPaths=coverage.xml \
-            -Dsonar.javascript.lcov.reportPaths=coverage/lcov-node.info
+            -Dsonar.javascript.lcov.reportPaths=coverage.xml
