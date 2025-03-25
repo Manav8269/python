@@ -37,7 +37,7 @@ jobs:
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: "https://strong-hands-repair.loca.lt"  # Change if using SonarCloud
+          SONAR_HOST_URL: "https://breezy-moments-accept.loca.lt"  # Change if using SonarCloud
         run: |
           sonar-scanner \
             -Dsonar.projectKey=your-project-key \
