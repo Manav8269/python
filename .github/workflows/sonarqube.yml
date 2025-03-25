@@ -29,12 +29,12 @@ jobs:
           pip install pytest coverage  # Install test & coverage tools
 
       - name: Run Tests with Coverage
-        continue-on-error: true  # Prevents workflow failure if tests fail
+        continue-on-error: false  # Stop if tests fail
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
-          pytest --continue-on-collection-errors || true  # Avoid stopping on import errors
-          coverage run -m pytest || echo "Tests failed, but continuing..."  # Runs tests with coverage
-          coverage xml -o coverage.xml  # Generates an XML report for SonarQube
+          coverage run -m pytest  # Run tests with coverage
+          coverage xml -o coverage.xml  # Generate XML report
+          coverage report --fail-under=80  # Enforce 80% coverage
 
       - name: Install SonarScanner
         run: |
