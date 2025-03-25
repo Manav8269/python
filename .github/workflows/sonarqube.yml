@@ -30,7 +30,10 @@ jobs:
 
       - name: Detect Project Directory
         id: detect-dir
-        run: echo "PROJECT_DIR=$(find . -name 'package.json' -exec dirname {} \;)" >> $GITHUB_ENV
+        run: |
+          export PROJECT_DIR=$(find . -name 'package.json' -exec dirname {} \;)
+          if [ -z "$PROJECT_DIR" ]; then echo "Error: Project directory not found!" && exit 1; fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
 
       - name: Install Dependencies
         run: |
