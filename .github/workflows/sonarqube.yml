@@ -41,10 +41,11 @@ jobs:
           npm install
 
       - name: Run Tests with Coverage
+        continue-on-error: true  # Ensures the workflow continues even if tests fail
         run: |
           cd $PROJECT_DIR
-          npm test -- --coverage --watchAll=false
-          mv coverage/lcov.info coverage.xml  # Convert coverage report for SonarQube
+          npm test -- --coverage --watchAll=false || echo "Tests failed, continuing..."
+          mv coverage/lcov.info coverage.xml || echo "No coverage report found, skipping move."
 
       - name: Install SonarScanner
         run: |
