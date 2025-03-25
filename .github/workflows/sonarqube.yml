@@ -72,4 +72,5 @@ jobs:
             -Dsonar.host.url=$SONAR_HOST_URL \
             -Dsonar.login=$SONAR_TOKEN \
             -Dsonar.javascript.lcov.reportPaths=coverage.xml \
-            -Dsonar.inclusions=**/*.{js,jsx,html,css}  # Scan all JS, JSX, HTML, and CSS files
+            -Dsonar.inclusions=**/*.{js,jsx,html,css}  # Scan all JS, JSX, HTML, and CSS files \
+            -Dsonar.coverage.exclusions=**/node_modules/**,**/test/**,**/*.spec.js,**/*.test.js
