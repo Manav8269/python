@@ -4,48 +4,39 @@ on:
   push:
     branches:
       - main
-      - develop
   pull_request:
     branches:
       - main
 
 jobs:
-  sonar:
-    name: SonarQube Scan
+  sonarqube_scan:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set Up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
       - name: Install Dependencies
         run: |
-          if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt
-          else
-            echo "No requirements.txt found, skipping..."
-          fi
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install coverage pytest
 
-      - name: Install SonarScanner
+      - name: Run Tests with Coverage
         run: |
-          curl -o sonar-scanner-cli.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
-          unzip sonar-scanner-cli.zip
-          sudo mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
-          echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
-          sudo chmod +x /opt/sonar-scanner/bin/sonar-scanner
+          coverage run -m pytest
+          coverage xml -o coverage.xml
 
-      - name: Run SonarQube Analysis
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: "https://breezy-moments-accept.loca.lt"  # Update to your SonarQube URL
+      - name: SonarQube Scan
         run: |
-          /opt/sonar-scanner/bin/sonar-scanner \
-            -Dsonar.projectKey=your-project-key \
+          sonar-scanner \
+            -Dsonar.projectKey=your_project_key \
             -Dsonar.sources=. \
-            -Dsonar.host.url=$SONAR_HOST_URL \
-            -Dsonar.login=$SONAR_TOKEN || echo "SonarQube scan failed"
+            -Dsonar.host.url=https://breezy-moments-accept.loca.lt \
+            -Dsonar.login=admin \
+            -Dsonar.password=admin \
+            -Dsonar.coverageReportPaths=coverage.xml
