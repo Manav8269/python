@@ -18,6 +18,12 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -34,10 +40,23 @@ jobs:
           sudo mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
           echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
 
+      - name: Expose SonarQube using ngrok (Optional)
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        run: |
+          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list >/dev/null
+          sudo apt update && sudo apt install ngrok
+          ngrok authtoken $NGROK_AUTH_TOKEN
+          ngrok http 9000 > ngrok.log &
+          sleep 10
+          export SONAR_HOST_URL=$(grep -o 'https://[a-zA-Z0-9.-]*\.ngrok-free\.app' ngrok.log)
+          echo "SonarQube is accessible at: $SONAR_HOST_URL"
+
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: "https://strong-hands-repair.loca.lt"  # Change if using SonarCloud
+          SONAR_HOST_URL: "https://strong-hands-repair.loca.lt" # Change if using ngrok
         run: |
           sonar-scanner \
             -Dsonar.projectKey=your-project-key \
