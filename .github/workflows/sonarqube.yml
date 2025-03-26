@@ -33,12 +33,6 @@ jobs:
           cd react-calculator-master
           npm ci
 
-      - name: Install required Babel and Jest dependencies
-        run: |
-          cd react-calculator-master
-          npm install --save-dev @babel/plugin-transform-duplicate-named-capturing-groups-regex
-          npm install --save-dev jest
-
       - name: Run React tests with coverage
         run: |
           cd react-calculator-master
