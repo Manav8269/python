@@ -44,7 +44,8 @@ jobs:
         run: |
           cd $PROJECT_DIR
           npm test -- --coverage --watchAll=false || echo "Tests failed, continuing..."
-          ls -R coverage  # Debugging: Check if coverage folder exists
+          ls -R coverage || echo "Coverage folder not found!"
+          cat coverage/lcov.info || echo "Coverage file missing!"
 
       - name: Upload Coverage Artifact (for debugging)
         uses: actions/upload-artifact@v4
@@ -71,3 +72,4 @@ jobs:
             -Dsonar.host.url=$SONAR_HOST_URL \
             -Dsonar.login=$SONAR_TOKEN \
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+            
