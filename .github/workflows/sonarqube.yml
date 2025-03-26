@@ -41,6 +41,16 @@ jobs:
         run: npm test -- --coverage
         working-directory: ${{ env.PROJECT_DIR }}
 
+      - name: Debug Coverage Files
+        run: ls -R ${{ env.PROJECT_DIR }}/coverage
+
+      - name: Verify Coverage File
+        run: |
+          if [ ! -f "${{ env.PROJECT_DIR }}/coverage/coverage-summary.json" ]; then
+            echo "Error: coverage-summary.json not found!"
+            exit 1
+          fi
+
       - name: Upload Coverage Report
         uses: actions/upload-artifact@v4
         with:
