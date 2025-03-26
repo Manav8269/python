@@ -47,6 +47,13 @@ jobs:
           ls -R coverage || echo "Coverage folder not found!"
           cat coverage/lcov.info || echo "Coverage file missing!"
 
+      - name: Check Coverage File
+        run: |
+          if [ ! -f "$PROJECT_DIR/coverage/lcov.info" ]; then
+            echo "ERROR: coverage/lcov.info not found!"
+            exit 1
+          fi
+
       - name: Upload Coverage Artifact (for debugging)
         uses: actions/upload-artifact@v4
         with:
@@ -71,5 +78,4 @@ jobs:
             -Dsonar.sources=. \
             -Dsonar.host.url=$SONAR_HOST_URL \
             -Dsonar.login=$SONAR_TOKEN \
-            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
-            
+            -Dsonar.javascript.lcov.reportPaths=$PROJECT_DIR/coverage/lcov.info
