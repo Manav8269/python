@@ -21,6 +21,13 @@ jobs:
         with:
           node-version: 18
 
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: react-calculator-master/node_modules
+          key: npm-${{ runner.os }}-${{ hashFiles('react-calculator-master/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+
       - name: Install React dependencies
         run: |
           cd react-calculator-master
@@ -38,7 +45,7 @@ jobs:
           CI=true npm test -- --coverage --watchAll=false
 
       - name: Install jq (for JSON parsing)
-        run: sudo apt-get install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Check React coverage
         run: |
@@ -65,4 +72,6 @@ jobs:
       - name: Check SonarQube Quality Gate
         run: |
           echo "Checking SonarQube Quality Gate..."
-          # Implement API call if needed to check the Quality Gate status
+          STATUS=$(curl -s -u "$SONAR_TOKEN:" "https://e83a-27-107-135-240.ngrok-free.app/api/qualitygates/project_status?projectKey=my-project" | jq -r '.projectStatus.status')
+          echo "Quality Gate Status: $STATUS"
+          if [[ "$STATUS" != "OK" ]]; then exit 1; fi
