@@ -38,7 +38,7 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
 
       - name: Run Tests with Coverage
-        run: npm test -- --coverage --watchAll=false || { echo "Jest tests failed"; exit 1; }
+        run: CI=true npm test -- --coverage --watchAll=false || { echo "Jest tests failed"; exit 1; }
         working-directory: ${{ env.PROJECT_DIR }}
 
       - name: Debug Coverage Directory
@@ -68,7 +68,7 @@ jobs:
         uses: sonarsource/sonarqube-scan-action@v2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: "https://183d-27-107-135-240.ngrok-free.app"
+          SONAR_HOST_URL: "https://e83a-27-107-135-240.ngrok-free.app"
         with:
           args: >
             -Dsonar.projectKey=react-calculator
