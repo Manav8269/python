@@ -1,4 +1,4 @@
-name: CI/CD with SonarQube (Separate)
+name: SonarQube Analysis
 
 on:
   push:
@@ -9,57 +9,41 @@ on:
       - main
 
 jobs:
-  test-and-coverage:
-    name: Run Tests and Coverage
+  sonarqube:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: 18
-
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
       - name: Install dependencies
-        working-directory: react-calculator-master
-        run: npm ci
-
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install coverage
+      
       - name: Run tests with coverage
-        working-directory: react-calculator-master
-        run: CI=true npm test -- --coverage --watchAll=false
-
-      - name: Install jq (for JSON parsing)
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Check test coverage
         run: |
-          COVERAGE=$(jq '.total.lines.pct' react-calculator-master/coverage/coverage-summary.json)
-          echo "React Coverage: $COVERAGE%"
-          if (( $(echo "$COVERAGE < 80" | bc -l) )); then exit 1; fi
-
-  sonarqube-scan:
-    name: SonarQube Analysis
-    runs-on: ubuntu-latest
-    needs: test-and-coverage
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run SonarQube Scan
+          coverage run -m unittest discover
+          coverage report -m
+          coverage xml -o coverage.xml
+      
+      - name: Enforce 80% coverage
+        run: |
+          COVERAGE=$(coverage report | tail -1 | awk '{print $4}' | sed 's/%//')
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "Code coverage is below 80% ($COVERAGE%). Failing the workflow."
+            exit 1
+          fi
+      
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@master
         env:
-          SONAR_HOST_URL: "https://e83a-27-107-135-240.ngrok-free.app"
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          docker run --rm \
-            -e SONAR_HOST_URL="$SONAR_HOST_URL" \
-            -e SONAR_SCANNER_OPTS="-Dsonar.projectKey=${{ github.repository }} -Dsonar.sources=. -Dsonar.token=$SONAR_TOKEN" \
-            -v "$(pwd):/usr/src" \
-            -w /usr/src \
-            sonarsource/sonar-scanner-cli
-
-      - name: Check SonarQube Quality Gate
-        run: |
-          STATUS=$(curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=${{ github.repository }}" | jq -r '.projectStatus.status')
-          echo "Quality Gate Status: $STATUS"
-          if [[ "$STATUS" != "OK" ]]; then exit 1; fi
+          SONAR_HOST_URL: https://e83a-27-107-135-240.ngrok-free.app
