@@ -1,68 +1,53 @@
-name: SonarQube Code Analysis
+name: Code Coverage with SonarQube
 
 on:
   push:
     branches:
       - main
-      - develop
   pull_request:
     branches:
       - main
 
 jobs:
-  sonar:
-    name: SonarQube Scan
+  test-and-analyze:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Ensures all branches and history are fetched
-
-      - name: Debug Repository Files
-        run: ls -R
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-
-      - name: Detect Project Directory
-        id: detect-dir
-        run: |
-          export PROJECT_DIR=$(find . -name 'package.json' -exec dirname {} \;)
-          if [ -z "$PROJECT_DIR" ]; then echo "Error: Project directory not found!" && exit 1; fi
-          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          node-version: '20'
 
       - name: Install Dependencies
-        run: |
-          cd $PROJECT_DIR
-          npm install
+        run: npm install
 
       - name: Run Tests with Coverage
-        continue-on-error: true  # Ensures the workflow continues even if tests fail
-        run: |
-          cd $PROJECT_DIR
-          npm test -- --coverage --watchAll=false || echo "Tests failed, continuing..."
-          mv coverage/lcov.info coverage.xml || echo "No coverage report found, skipping move."
+        run: npm test -- --coverage
 
-      - name: Install SonarScanner
-        run: |
-          curl -o sonar-scanner-cli.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
-          unzip sonar-scanner-cli.zip
-          sudo mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
-          echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
 
-      - name: Run SonarQube Analysis
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@v2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: "https://098a-27-107-135-240.ngrok-free.app"
+        with:
+          args: >
+            -Dsonar.projectKey=react-calculator
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+            -Dsonar.qualitygate.wait=true
+
+      - name: Check Code Coverage Threshold
         run: |
-          cd $PROJECT_DIR
-          sonar-scanner \
-            -Dsonar.projectKey=your-project-key \
-            -Dsonar.sources=. \
-            -Dsonar.host.url=$SONAR_HOST_URL \
-            -Dsonar.login=$SONAR_TOKEN \
-            -Dsonar.javascript.lcov.reportPaths=coverage.xml
+          COVERAGE=$(grep -o '"total": {[^}]*}' coverage/coverage-summary.json | grep -o '"lines": {[^}]*}' | grep -o '"pct": [0-9]*' | grep -o '[0-9]*')
+          echo "Code Coverage: $COVERAGE%"
+          if [ "$COVERAGE" -lt 80 ]; then
+            echo "Code coverage is below 80%. Failing the workflow."
+            exit 1
+          fi
