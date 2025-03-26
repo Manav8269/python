@@ -34,31 +34,22 @@ jobs:
           export PROJECT_DIR=$(find . -name 'package.json' -exec dirname {} \;)
           if [ -z "$PROJECT_DIR" ]; then echo "Error: Project directory not found!" && exit 1; fi
           echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
-
       - name: Install Dependencies
         run: |
           cd $PROJECT_DIR
           npm install
-
       - name: Run Tests with Coverage
         run: |
           cd $PROJECT_DIR
           npm test -- --coverage --watchAll=false || echo "Tests failed, continuing..."
           ls -R coverage || echo "Coverage folder not found!"
-          if [ -f coverage/lcov.info ]; then
-            echo "Coverage file exists. Showing first 20 lines:"
-            head -20 coverage/lcov.info
-          else
-            echo "Coverage file missing!"
-          fi
-
+          cat coverage/lcov.info || echo "Coverage file missing!"
       - name: Check Coverage File
         run: |
-          if [ ! -s "$PROJECT_DIR/coverage/lcov.info" ]; then
-            echo "ERROR: coverage/lcov.info is empty or missing!"
+          if [ ! -f "$PROJECT_DIR/coverage/lcov.info" ]; then
+            echo "ERROR: coverage/lcov.info not found!"
             exit 1
           fi
-
       - name: Upload Coverage Artifact (for debugging)
         uses: actions/upload-artifact@v4
         with:
@@ -71,7 +62,6 @@ jobs:
           unzip sonar-scanner-cli.zip
           sudo mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
           echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
-
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
