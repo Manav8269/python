@@ -29,7 +29,10 @@ jobs:
       - name: Run React tests with coverage
         run: |
           cd react-calculator-master
-          npm test -- --coverage
+          npm run test -- --coverage
+
+      - name: Install jq (for JSON parsing)
+        run: sudo apt-get install jq
 
       - name: Check React coverage
         run: |
