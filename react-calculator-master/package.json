@@ -24,7 +24,6 @@
         "deploy": "gh-pages -d build"
     },
     "jest": {
-        "collectCoverage": true,
         "collectCoverageFrom": [
             "src/**/*.{js,jsx}",
             "!src/index.js",
