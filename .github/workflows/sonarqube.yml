@@ -41,11 +41,16 @@ jobs:
           npm install
 
       - name: Run Tests with Coverage
-        continue-on-error: true  # Ensures the workflow continues even if tests fail
         run: |
           cd $PROJECT_DIR
           npm test -- --coverage --watchAll=false || echo "Tests failed, continuing..."
-          mv coverage/lcov.info coverage.xml || echo "No coverage report found, skipping move."
+          ls -R coverage  # Debugging: Check if coverage folder exists
+
+      - name: Upload Coverage Artifact (for debugging)
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report
+          path: ${{ env.PROJECT_DIR }}/coverage
 
       - name: Install SonarScanner
         run: |
@@ -65,4 +70,4 @@ jobs:
             -Dsonar.sources=. \
             -Dsonar.host.url=$SONAR_HOST_URL \
             -Dsonar.login=$SONAR_TOKEN \
-            -Dsonar.javascript.lcov.reportPaths=coverage.xml
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
