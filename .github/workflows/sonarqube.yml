@@ -38,11 +38,18 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
 
       - name: Run Tests with Coverage
-        run: npm test -- --coverage
+        run: npm test -- --coverage || { echo "Jest tests failed"; exit 1; }
         working-directory: ${{ env.PROJECT_DIR }}
 
-      - name: Debug Coverage Files
-        run: ls -R ${{ env.PROJECT_DIR }}/coverage
+      - name: Debug Coverage Directory
+        run: ls -lah ${{ env.PROJECT_DIR }}/coverage
+
+      - name: Verify Coverage Directory
+        run: |
+          if [ ! -d "${{ env.PROJECT_DIR }}/coverage" ]; then
+            echo "Error: Coverage directory not found!"
+            exit 1
+          fi
 
       - name: Verify Coverage File
         run: |
