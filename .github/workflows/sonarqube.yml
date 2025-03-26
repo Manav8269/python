@@ -45,12 +45,17 @@ jobs:
           cd $PROJECT_DIR
           npm test -- --coverage --watchAll=false || echo "Tests failed, continuing..."
           ls -R coverage || echo "Coverage folder not found!"
-          cat coverage/lcov.info || echo "Coverage file missing!"
+          if [ -f coverage/lcov.info ]; then
+            echo "Coverage file exists. Showing first 20 lines:"
+            head -20 coverage/lcov.info
+          else
+            echo "Coverage file missing!"
+          fi
 
       - name: Check Coverage File
         run: |
-          if [ ! -f "$PROJECT_DIR/coverage/lcov.info" ]; then
-            echo "ERROR: coverage/lcov.info not found!"
+          if [ ! -s "$PROJECT_DIR/coverage/lcov.info" ]; then
+            echo "ERROR: coverage/lcov.info is empty or missing!"
             exit 1
           fi
 
