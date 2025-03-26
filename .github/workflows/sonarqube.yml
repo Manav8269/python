@@ -51,7 +51,7 @@ jobs:
         uses: sonarsource/sonarqube-scan-action@v2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: "https://098a-27-107-135-240.ngrok-free.app"
+          SONAR_HOST_URL: "https://183d-27-107-135-240.ngrok-free.app"
         with:
           args: >
             -Dsonar.projectKey=react-calculator
