@@ -78,7 +78,7 @@ jobs:
       - name: 🔎 Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_HOST_URL: "https://015c-27-107-135-240.ngrok-free.app"
         run: |
           cd "$PROJECT_DIR"
           /opt/sonar-scanner/bin/sonar-scanner \
@@ -105,5 +105,5 @@ jobs:
           password: ${{ secrets.EMAIL_PASSWORD }}
           subject: "CI/CD Workflow Success"
           body: "Your Django CI/CD workflow with SonarQube has completed successfully."
-          to: "guptamanav8269@gmail.com"
+          to: "receiver@example.com"
           from: "your-email@example.com"
