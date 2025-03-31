@@ -40,24 +40,9 @@ jobs:
         run: |
           cd "$PROJECT_DIR"
           pip install --upgrade pip
-          pip install pytest coverage django
+          pip install pytest coverage django jq
           if [ -f "requirements.txt" ]; then
             pip install -r requirements.txt
-          fi
-
-      - name: 🤖 Setup Test Environment
-        run: |
-          cd "$PROJECT_DIR"
-          if [ ! -d "tests" ]; then
-            mkdir -p tests
-            echo "from django.test import TestCase" > tests/test_example.py
-            echo "class ExampleTest(TestCase):" >> tests/test_example.py
-            echo "    def test_example(self):" >> tests/test_example.py
-            echo "        self.assertTrue(True)" >> tests/test_example.py
-          fi
-          if [ ! -f "tests/test_example.py" ]; then
-            echo "❌ Failed to create test file!"
-            exit 1
           fi
 
       - name: 📊 Run Tests and Generate Coverage
@@ -134,7 +119,13 @@ jobs:
     needs: build-and-analyze
     if: needs.build-and-analyze.outputs.quality_gate != 'OK'
     steps:
+      - name: ⏪ Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
       - name: ⏪ Revert Changes Locally
         run: |
           git reset --hard HEAD~1
+          git push --force
           echo "🔄 Changes reverted due to failing quality gate."
