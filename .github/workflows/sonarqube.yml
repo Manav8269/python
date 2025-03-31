@@ -81,7 +81,7 @@ jobs:
       - name: 🔎 Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: "https://0fe4-27-107-135-240.ngrok-free.app"
+          SONAR_HOST_URL: "https://68e8-27-107-135-240.ngrok-free.app"
         run: |
           cd "$PROJECT_DIR"
           /opt/sonar-scanner/bin/sonar-scanner \
