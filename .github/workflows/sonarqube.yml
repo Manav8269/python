@@ -69,7 +69,7 @@ jobs:
       - name: 🔎 Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: "https://015c-27-107-135-240.ngrok-free.app"
+          SONAR_HOST_URL: "https://501e-27-107-135-240.ngrok-free.app"
         run: |
           cd "$PROJECT_DIR"
           /opt/sonar-scanner/bin/sonar-scanner \
@@ -110,14 +110,12 @@ jobs:
           subject: "CI/CD Workflow Status"
           to: guptamanav8269@gmail.com
           from: "CI/CD Pipeline"
-          body: |
-            Workflow status:
-            $(if [ "${{ needs.build-and-analyze.outputs.quality_gate }}" = "OK" ]; then echo "✅ Code pushed to repo."; else echo "❌ Changes reverted due to low quality score."; fi)
+          body: "Workflow status: $(if [ \"${{ needs.build-and-analyze.outputs.quality_gate }}\" = \"OK\" ]; then echo \"✅ Code pushed to repo.\"; else echo \"❌ Changes reverted due to low quality score.\"; fi)"
 
   revert:
     runs-on: ubuntu-latest
     needs: build-and-analyze
-    if: needs.build-and-analyze.outputs.quality_gate != 'OK'
+    if: ${{ needs.build-and-analyze.outputs.quality_gate != 'OK' }}
     steps:
       - name: ⏪ Checkout Repository
         uses: actions/checkout@v4
