@@ -1,137 +1,136 @@
-name: CI/CD with SonarQube and Django
+name: Django CI/CD with SonarQube
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
+  contents: write
   issues: write
+  pull-requests: write
+
+env:
+  SONAR_HOST_URL: https://501e-27-107-135-240.ngrok-free.app
+  SONAR_PROJECT_KEY: my-django-project
+  PYTHON_VERSION: '3.9'
 
 jobs:
-  build-and-analyze:
+  quality-check:
+    name: 🛠️ Build & Quality Gate
     runs-on: ubuntu-latest
-
     outputs:
-      quality_gate: ${{ steps.quality_gate.outputs.status }}
+      quality_gate: ${{ steps.check-quality-gate.outputs.status }}
 
     steps:
-      - name: ⬇️ Checkout Repository
+      - name: ⬇️ Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 🐍 Set up Python
+      - name: 🐍 Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
 
-      - name: 📂 Locate Django Project
-        id: find_project
+      - name: 🔍 Discover Django Project
+        id: project-discovery
         run: |
-          PROJECT_DIR=$(find . -name manage.py -printf '%h\n' | head -n 1)
-          [ -z "$PROJECT_DIR" ] && echo "❌ ERROR: manage.py not found!" && exit 1
-          echo "PROJECT_DIR=${PROJECT_DIR}" >> $GITHUB_ENV
-          echo "PROJECT_BASE=$(dirname "${PROJECT_DIR}")" >> $GITHUB_ENV
-          echo "PYTHONPATH=${PROJECT_BASE}" >> $GITHUB_ENV
-          echo "✅ Found Django project at: ${PROJECT_DIR}"
+          PROJECT_DIR=$(find . -name manage.py -printf '%h\n' | head -n1)
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          echo "python_path=$(dirname $PROJECT_DIR)" >> $GITHUB_OUTPUT
 
-      - name: 📞 Install Dependencies
+      - name: 📦 Install dependencies
         run: |
-          cd "$PROJECT_DIR"
           pip install --upgrade pip
-          pip install pytest coverage django jq
-          if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt
-          fi
+          pip install -r "$PROJECT_DIR/requirements.txt"
 
-      - name: 📊 Run Tests and Generate Coverage
+      - name: ✅ Run Tests
         run: |
           cd "$PROJECT_DIR"
-          python -m coverage run --source=. manage.py test || true
-          python -m coverage xml -o coverage.xml
-          if [ ! -f "coverage.xml" ]; then
-            echo "❌ Coverage file not generated! Creating empty one..."
-            echo '<coverage version="1.0"></coverage>' > coverage.xml
-          fi
-          echo "Coverage report generated at:"
-          ls -la coverage.xml
+          python -m pytest --cov=. --cov-report=xml
 
-      - name: 🛠️ Install SonarScanner
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip
-          wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
-          unzip sonar-scanner-cli-5.0.1.3006-linux.zip
-          sudo mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
-          echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
-
-      - name: 🔎 Run SonarQube Analysis
+      - name: 🔎 SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@master
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: "https://501e-27-107-135-240.ngrok-free.app"
-        run: |
-          cd "$PROJECT_DIR"
-          /opt/sonar-scanner/bin/sonar-scanner \
-            -Dsonar.projectKey=my-django-project \
-            -Dsonar.sources=. \
-            -Dsonar.host.url="$SONAR_HOST_URL" \
-            -Dsonar.login="$SONAR_TOKEN" \
-            -Dsonar.python.version=3.9 \
-            -Dsonar.python.coverage.reportPaths=coverage.xml \
-            -Dsonar.working.directory="$PROJECT_DIR/.scannerwork"
+        with:
+          args: >
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
+            -Dsonar.python.coverage.reportPaths=coverage.xml
+            -Dsonar.python.version=${{ env.PYTHON_VERSION }}
 
-      - name: 📊 Check SonarQube Quality Gate
-        id: quality_gate
-        run: |
-          STATUS=$(curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project" | jq -r .projectStatus.status)
-          echo "status=$STATUS" >> $GITHUB_OUTPUT
-
-  notify:
-    runs-on: ubuntu-latest
-    needs: build-and-analyze
-    steps:
-      - name: 📢 Notify via GitHub Issues
-        run: |
-          if [[ "${{ needs.build-and-analyze.outputs.quality_gate }}" == "OK" ]]; then
-            gh issue create --title "CI/CD Success" --body "✅ Workflow succeeded, quality gate passed. Code pushed." --repo $GITHUB_REPOSITORY
-          else
-            gh issue create --title "CI/CD Failed" --body "❌ Workflow failed, quality gate did not pass. Changes reverted." --repo $GITHUB_REPOSITORY
-          fi  # Added missing fi
+      - name: 📊 Check Quality Gate
+        id: check-quality-gate
+        uses: sonarsource/sonarqube-quality-gate-action@master
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-      - name: 📧 Send Email Notification
+  notifications:
+    name: 📢 Notifications
+    needs: quality-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub Issue
+        if: ${{ always() }}
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const status = '${{ needs.quality-check.outputs.quality_gate }}';
+            if (status === 'OK') {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Quality Gate Passed ✅',
+                body: 'All checks passed successfully!'
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Quality Gate Failed ❌',
+                body: 'Quality check failed! Review findings.'
+              });
+            }
+
+      - name: Send Email
         uses: dawidd6/action-send-mail@v3
+        if: ${{ always() }}
         with:
           server_address: smtp.gmail.com
           server_port: 587
-          username: ${{ secrets.EMAIL_USERNAME }}
+          username: ${{ secrets.EMAIL_USER }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "CI/CD Workflow Status"
           to: guptamanav8269@gmail.com
-          from: "CI/CD Pipeline"
+          subject: CI/CD Status - ${{ job.status }}
           body: |
-            Workflow status: 
-            ${{ needs.build-and-analyze.outputs.quality_gate == 'OK' && '✅ Code pushed to repo.' || '❌ Changes reverted due to low quality score.' }}
+            Quality Gate Status: ${{ needs.quality-check.outputs.quality_gate }}
+            Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-  revert:
+  safe-revert:
+    name: ⏪ Safe Revert
+    needs: quality-check
+    if: ${{ needs.quality-check.outputs.quality_gate != 'OK' }}
     runs-on: ubuntu-latest
-    needs: build-and-analyze
-    if: ${{ needs.build-and-analyze.outputs.quality_gate != 'OK' }}
     steps:
-      - name: ⏪ Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
+          persist-credentials: true
           ref: main
-          persist-credentials: true  # Added for push permissions
 
-      - name: ⏪ Revert Changes Locally
+      - name: Create Revert Commit
         run: |
-          if git rev-parse HEAD~1 >/dev/null 2>&1; then
-            git reset --hard HEAD~1
-            git push origin main --force
-            echo "🔄 Changes reverted due to failing quality gate."
-          else
-            echo "⚠️ No previous commit found to revert."
-          fi  # Removed extraneous text
+          git config --global user.name "GitHub CI"
+          git config --global user.email "ci@github.com"
+          git revert HEAD --no-edit
+          git push origin main
+
+      - name: Create Revert PR
+        uses: peter-evans/create-pull-request@v5
+        with:
+          commit-message: "Revert failed changes"
+          title: "Revert: ${{ github.event.head_commit.message }}"
+          body: "Automated revert due to quality gate failure"
+          branch: "revert-${{ github.run_id }}"
+          base: main
