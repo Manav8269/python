@@ -84,11 +84,12 @@ jobs:
           SONAR_HOST_URL: "https://68e8-27-107-135-240.ngrok-free.app"
         run: |
           cd "$PROJECT_DIR"
+          rm -rf /home/runner/.sonar/cache  # Clear SonarQube cache
           /opt/sonar-scanner/bin/sonar-scanner \
             -Dsonar.projectKey=my-django-project \
             -Dsonar.sources=. \
             -Dsonar.host.url="$SONAR_HOST_URL" \
-            -Dsonar.login="$SONAR_TOKEN" \
+            -Dsonar.token="$SONAR_TOKEN" \
             -Dsonar.python.version=3.9 \
             -Dsonar.python.coverage.reportPaths=coverage.xml \
             -Dsonar.working.directory="$PROJECT_DIR/.scannerwork"
