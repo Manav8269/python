@@ -93,7 +93,7 @@ jobs:
     steps:
       - name: 📢 Notify via GitHub Issues
         run: |
-          if [ "${{ needs.build-and-analyze.outputs.quality_gate }}" = "OK" ]; then
+          if [[ "${{ needs.build-and-analyze.outputs.quality_gate }}" == "OK" ]]; then
             gh issue create --title "CI/CD Success" --body "✅ Workflow succeeded, quality gate passed. Code pushed." --repo $GITHUB_REPOSITORY
           else
             gh issue create --title "CI/CD Failed" --body "❌ Workflow failed, quality gate did not pass. Changes reverted." --repo $GITHUB_REPOSITORY
@@ -110,7 +110,9 @@ jobs:
           subject: "CI/CD Workflow Status"
           to: guptamanav8269@gmail.com
           from: "CI/CD Pipeline"
-          body: "Workflow status: $(if [ \"${{ needs.build-and-analyze.outputs.quality_gate }}\" = \"OK\" ]; then echo \"✅ Code pushed to repo.\"; else echo \"❌ Changes reverted due to low quality score.\"; fi)"
+          body: |
+            Workflow status: 
+            ${{ needs.build-and-analyze.outputs.quality_gate == 'OK' && '✅ Code pushed to repo.' || '❌ Changes reverted due to low quality score.' }}
 
   revert:
     runs-on: ubuntu-latest
@@ -124,6 +126,10 @@ jobs:
 
       - name: ⏪ Revert Changes Locally
         run: |
-          git reset --hard HEAD~1
-          git push --force
-          echo "🔄 Changes reverted due to failing quality gate."
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            git reset --hard HEAD~1
+            git push --force
+            echo "🔄 Changes reverted due to failing quality gate."
+          else
+            echo "⚠️ No previous commit found to revert."
+          fi
