@@ -103,7 +103,7 @@ jobs:
           git config --global user.name "GitHub Actions"
           git add .
           git commit -m "Automated commit: Quality gate passed."
-          git push
+          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/Manav8269/python.git HEAD:main
           echo "✅ Code pushed to repository."
           echo "::notice title=Code Approved::Click OK to dismiss."
 
@@ -111,7 +111,7 @@ jobs:
         if: env.status != 'OK'
         run: |
           git reset --hard HEAD~1
-          git push --force
+          git push --force https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/Manav8269/python.git HEAD:main
           echo "❌ Changes reverted due to failing quality gate."
 
   notify:
