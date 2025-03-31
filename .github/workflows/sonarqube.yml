@@ -93,14 +93,49 @@ jobs:
             -Dsonar.python.coverage.reportPaths=coverage.xml \
             -Dsonar.working.directory="$PROJECT_DIR/.scannerwork"
 
+      - name: 📊 Check SonarQube Quality Gate
+        id: quality_gate
+        run: |
+          STATUS=$(curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project" | jq -r .projectStatus.status)
+          if [ "$STATUS" = "OK" ]; then
+            echo "QUALITY_GATE=pass" >> $GITHUB_ENV
+          else
+            echo "QUALITY_GATE=fail" >> $GITHUB_ENV
+          fi
+
   notify:
     runs-on: ubuntu-latest
     needs: build-and-analyze
-    if: success()
-
     steps:
       - name: 📢 Notify via GitHub Issues
         run: |
-          gh issue create --title "CI/CD Workflow Success" --body "Your Django CI/CD workflow with SonarQube has completed successfully." --repo $GITHUB_REPOSITORY
+          if [ "$QUALITY_GATE" = "pass" ]; then
+            gh issue create --title "CI/CD Success" --body "✅ Workflow succeeded, quality gate passed. Code pushed." --repo $GITHUB_REPOSITORY
+          else
+            gh issue create --title "CI/CD Failed" --body "❌ Workflow failed, quality gate did not pass. Changes reverted." --repo $GITHUB_REPOSITORY
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📧 Send Email Notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "CI/CD Workflow Status"
+          to: guptamanav8269@gmail.com
+          from: "CI/CD Pipeline"
+          body: |
+            Workflow status:
+            $(if [ "$QUALITY_GATE" = "pass" ]; then echo "✅ Code pushed to repo."; else echo "❌ Changes reverted due to low quality score."; fi)
+
+  revert:
+    runs-on: ubuntu-latest
+    needs: build-and-analyze
+    if: env.QUALITY_GATE == 'fail'
+    steps:
+      - name: ⏪ Revert Changes Locally
+        run: |
+          git reset --hard HEAD~1
+          echo "🔄 Changes reverted due to failing quality gate."
