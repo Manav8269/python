@@ -8,6 +8,10 @@ on:
 permissions:
   issues: write
 
+environments:
+  approval:
+    required: true
+
 jobs:
   build-and-analyze:
     runs-on: ubuntu-latest
@@ -98,6 +102,8 @@ jobs:
           gh issue create --title "CI/CD Workflow Success" --body "Your Django CI/CD workflow with SonarQube has completed successfully." --repo $GITHUB_REPOSITORY
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: ✅ Show Pop-up for Approval
+      - name: ✅ Show Approval Pop-up
         run: |
-          echo "::notice title=Code Approved::Click OK to dismiss."
+          echo "::notice title=Code Approved::Click OK to proceed."
+      - name: ⏳ Wait for Manual Approval
+        uses: hmarr/auto-approve-action@v3
