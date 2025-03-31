@@ -35,6 +35,7 @@ jobs:
           echo "PROJECT_BASE=$(dirname "${PROJECT_DIR}")" >> $GITHUB_ENV
           echo "PYTHONPATH=${PROJECT_BASE}" >> $GITHUB_ENV
           echo "✅ Found Django project at: ${PROJECT_DIR}"
+
       - name: 📞 Install Dependencies
         run: |
           cd "$PROJECT_DIR"
@@ -43,6 +44,7 @@ jobs:
           if [ -f "requirements.txt" ]; then
             pip install -r requirements.txt
           fi
+
       - name: 📊 Run Tests and Generate Coverage
         run: |
           cd "$PROJECT_DIR"
@@ -54,6 +56,7 @@ jobs:
           fi
           echo "Coverage report generated at:"
           ls -la coverage.xml
+
       - name: 🛠️ Install SonarScanner
         run: |
           sudo apt-get update
@@ -62,6 +65,7 @@ jobs:
           unzip sonar-scanner-cli-5.0.1.3006-linux.zip
           sudo mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
           echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
+
       - name: 🔎 Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -76,22 +80,50 @@ jobs:
             -Dsonar.python.version=3.9 \
             -Dsonar.python.coverage.reportPaths=coverage.xml \
             -Dsonar.working.directory="$PROJECT_DIR/.scannerwork"
+
       - name: 📊 Check SonarQube Quality Gate
         id: quality_gate
         run: |
           STATUS=$(curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project" | jq -r .projectStatus.status)
-          echo "status=$STATUS" >> $GITHUB_OUTPUT
-  notify:
+          echo "status=$STATUS" >> $GITHUB_ENV
+
+  deploy:
     runs-on: ubuntu-latest
     needs: build-and-analyze
     steps:
+      - name: ⬇️ Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🚀 Push Code if Quality Gate Passes
+        if: env.status == 'OK'
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git add .
+          git commit -m "Automated commit: Quality gate passed."
+          git push
+          echo "✅ Code pushed to repository."
+          echo "::notice title=Code Approved::Click OK to dismiss."
+
+      - name: ⏪ Revert Changes if Quality Gate Fails
+        if: env.status != 'OK'
+        run: |
+          git reset --hard HEAD~1
+          git push --force
+          echo "❌ Changes reverted due to failing quality gate."
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
       - name: 📢 Notify via GitHub Issues
         run: |
-          if [[ "${{ needs.build-and-analyze.outputs.quality_gate }}" == "OK" ]]; then
+          if [[ "${{ env.status }}" == "OK" ]]; then
             gh issue create --title "CI/CD Success" --body "✅ Workflow succeeded, quality gate passed. Code pushed." --repo $GITHUB_REPOSITORY
           else
             gh issue create --title "CI/CD Failed" --body "❌ Workflow failed, quality gate did not pass. Changes reverted." --repo $GITHUB_REPOSITORY
-          fi  # Added missing fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -107,24 +139,4 @@ jobs:
           from: "CI/CD Pipeline"
           body: |
             Workflow status: 
-            ${{ needs.build-and-analyze.outputs.quality_gate == 'OK' && '✅ Code pushed to repo.' || '❌ Changes reverted due to low quality score.' }}
-  revert:
-    runs-on: ubuntu-latest
-    needs: build-and-analyze
-    if: ${{ needs.build-and-analyze.outputs.quality_gate != 'OK' }}
-    steps:
-      - name: ⏪ Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          persist-credentials: true  # Added for push permissions
-
-      - name: ⏪ Revert Changes Locally
-        run: |
-          if git rev-parse HEAD~1 >/dev/null 2>&1; then
-            git reset --hard HEAD~1
-            git push origin main --force
-            echo "🔄 Changes reverted due to failing quality gate."
-          else
-            echo "⚠️ No previous commit found to revert."
-          fi  # Removed extraneous text
+            ${{ env.status == 'OK' && '✅ Code pushed to repo.' || '❌ Changes reverted due to low quality score.' }}
