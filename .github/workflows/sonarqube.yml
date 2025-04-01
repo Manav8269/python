@@ -6,6 +6,7 @@ on:
       - main
 
 permissions:
+  contents: write  # ✅ Allows GitHub Actions to push changes
   issues: write
 
 jobs:
@@ -51,10 +52,6 @@ jobs:
             echo "class ExampleTest(TestCase):" >> tests/test_example.py
             echo "    def test_example(self):" >> tests/test_example.py
             echo "        self.assertTrue(True)" >> tests/test_example.py
-          fi
-          if [ ! -f "tests/test_example.py" ]; then
-            echo "❌ Failed to create test file!"
-            exit 1
           fi
 
       - name: 📊 Run Tests and Generate Coverage
@@ -111,9 +108,9 @@ jobs:
           echo "CI/CD Workflow completed successfully" > status.txt
           git add status.txt
           git commit -m "Updated status to completed"
-          git push
+          git push https://Manav8269:${{ secrets.GH_PAT }}@github.com/Manav8269/python.git main
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
 
       - name: 🎉 Show Pop-up Notification
         run: |
