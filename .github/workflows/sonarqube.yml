@@ -101,6 +101,11 @@ jobs:
       - name: ⬇️ Checkout Repository (for Notify job)
         uses: actions/checkout@v4
 
+      - name: 📢 Set Git User Info
+        run: |
+          git config --global user.email "your-email@example.com"
+          git config --global user.name "Your Name"
+
       - name: 📢 Update Status File
         run: |
           echo "CI/CD Workflow completed successfully" > status.txt
