@@ -105,4 +105,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🎉 Show Pop-up Notification
-        run: echo "::notice::✅ CI/CD Workflow completed successfully! View the notification here: https://manav8269.github.io/python/"
+        run: |
+          echo "::notice::✅ CI/CD Workflow completed successfully! View it here: https://manav8269.github.io/python/"
