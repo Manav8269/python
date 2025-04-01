@@ -98,12 +98,14 @@ jobs:
     needs: build-and-analyze
 
     steps:
-      - name: 📢 Notify via GitHub Issues
+      - name: 📢 Update Status File
         run: |
-          gh issue create --title "CI/CD Workflow Success" --body "Your Django CI/CD workflow with SonarQube has completed successfully." --repo $GITHUB_REPOSITORY
+          echo "CI/CD Workflow completed successfully" > status.txt
+          git add status.txt
+          git commit -m "Updated status to completed"
+          git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🎉 Show Pop-up Notification
-        run: |
-          echo "::notice::✅ CI/CD Workflow completed successfully! View it here: https://manav8269.github.io/python/"
+        run: echo "::notice::✅ CI/CD Workflow completed successfully! View it here: https://manav8269.github.io/python/"
