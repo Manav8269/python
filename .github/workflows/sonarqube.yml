@@ -88,7 +88,7 @@ jobs:
             -Dsonar.projectKey=my-django-project \
             -Dsonar.sources=. \
             -Dsonar.host.url="$SONAR_HOST_URL" \
-            -Dsonar.login="$SONAR_TOKEN" \
+            -Dsonar.token="$SONAR_TOKEN" \
             -Dsonar.python.version=3.9 \
             -Dsonar.python.coverage.reportPaths=coverage.xml \
             -Dsonar.working.directory="$PROJECT_DIR/.scannerwork"
@@ -96,14 +96,8 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     needs: build-and-analyze
-    environment:
-      name: approval
-      url: "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
     steps:
-      - name: ✅ Await Approval
-        run: echo "Waiting for approval..."
-      
       - name: 📢 Notify via GitHub Issues
         run: |
           gh issue create --title "CI/CD Workflow Success" --body "Your Django CI/CD workflow with SonarQube has completed successfully." --repo $GITHUB_REPOSITORY
