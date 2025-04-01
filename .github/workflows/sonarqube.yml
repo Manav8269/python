@@ -104,5 +104,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🎉 Show Pop-up Notification
-        run: echo "::notice::✅ CI/CD Workflow completed successfully! View it here: https://your-username.github.io/your-repository/"
+      - name: 🎉 Notify Completion
+        run: echo "::notice::✅ CI/CD Workflow completed successfully!"
