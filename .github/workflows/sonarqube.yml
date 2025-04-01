@@ -100,11 +100,27 @@ jobs:
           echo "Running status check..."
           STATUS_RESPONSE=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: \
             "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project")
-          
-          echo "Full STATUS_RESPONSE: $STATUS_RESPONSE" # Debugging full response
+
+          # Debugging: print the full response from SonarQube API
+          echo "Full STATUS_RESPONSE: $STATUS_RESPONSE" 
+
+          # Check if the response is empty or malformed
+          if [ -z "$STATUS_RESPONSE" ]; then
+            echo "❌ Error: Empty response from SonarQube API"
+            exit 1
+          fi
 
           STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.projectStatus.status')
+          if [ "$STATUS" == "null" ]; then
+            echo "❌ Error: Failed to extract project status from response"
+            exit 1
+          fi
+
           SCORE=$(echo "$STATUS_RESPONSE" | jq -r '.component.measures[0].value')
+          if [ "$SCORE" == "null" ]; then
+            echo "❌ Error: Failed to extract coverage score from response"
+            exit 1
+          fi
 
           echo "SonarQube Status: $STATUS"
           echo "SonarQube Score: $SCORE"
@@ -119,24 +135,16 @@ jobs:
             echo "❌ Code Quality Not Approved"
             echo "APPROVED=false" >> $GITHUB_ENV
 
-      - name: 📢 Create GitHub Issue for Approved Code
-        if: env.APPROVED == 'true'
-        run: |
-          gh issue create --title "✅ Code Quality Passed" --body "🎉 Your code passed SonarQube analysis with a score of ${{ env.SONAR_SCORE }}%. ✅" --repo $GITHUB_REPOSITORY
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 📢 Create GitHub Issue for Not Approved Code
-        if: env.APPROVED == 'false'
-        run: |
-          gh issue create --title "❌ Code Quality Failed" --body "😞 Your code failed SonarQube analysis. Fix the issues and retry." --repo $GITHUB_REPOSITORY
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   notify:
     runs-on: ubuntu-latest
     needs: build-and-analyze
 
     steps:
+      - name: 📢 Notify via GitHub Issues
+        run: |
+          gh issue create --title "CI/CD Workflow Success" --body "Your Django CI/CD workflow with SonarQube has completed successfully." --repo $GITHUB_REPOSITORY
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: 🎉 Notify Completion
         run: echo "::notice::✅ CI/CD Workflow completed successfully!"
