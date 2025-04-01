@@ -97,13 +97,20 @@ jobs:
         id: sonar_status
         run: |
           sleep 10
+          echo "Running status check..."
           STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: \
             "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project" \
             | jq -r '.projectStatus.status')
+          
+          # Debugging status
+          echo "STATUS response: $STATUS"
 
           SCORE=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: \
             "$SONAR_HOST_URL/api/measures/component?component=my-django-project&metricKeys=coverage" \
             | jq -r '.component.measures[0].value')
+
+          # Debugging score
+          echo "SCORE response: $SCORE"
 
           echo "SonarQube Status: $STATUS"
           echo "SonarQube Score: $SCORE"
