@@ -105,22 +105,36 @@ jobs:
           echo "SONAR_SCORE=$SCORE" >> $GITHUB_ENV
           echo "SONAR_STATUS=$STATUS" >> $GITHUB_ENV
 
-          if [ "$STATUS" = "OK" ] && [ "$(echo "$SCORE >= 80" | bc)" -eq 1 ]; then
+          if [ "$STATUS" = "OK" ] && [ "$SCORE" -ge 80 ]; then
             echo "✅ Code Quality Approved"
             echo "APPROVED=true" >> $GITHUB_ENV
           else
             echo "❌ Code Quality Not Approved"
             echo "APPROVED=false" >> $GITHUB_ENV
 
-      - name: 📧 Send Email Notification
+      - name: 📧 Send Email Notification - Approved
+        if: env.APPROVED == 'true'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 587
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: ${{ env.APPROVED == 'true' && '✅ Code Quality Passed' || '❌ Code Quality Failed' }}
-          body: ${{ env.APPROVED == 'true' && '🎉 Your code passed SonarQube analysis with a score of '${{ env.SONAR_SCORE }}'%. ✅' || '😞 Your code failed SonarQube analysis. Fix the issues and retry.' }}
+          subject: "✅ Code Quality Passed"
+          body: "🎉 Your code passed SonarQube analysis with a score of ${{ env.SONAR_SCORE }}%. ✅"
+          to: developer@example.com
+          from: CI/CD Pipeline
+
+      - name: 📧 Send Email Notification - Not Approved
+        if: env.APPROVED == 'false'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "❌ Code Quality Failed"
+          body: "😞 Your code failed SonarQube analysis. Fix the issues and retry."
           to: developer@example.com
           from: CI/CD Pipeline
   notify:
