@@ -98,6 +98,9 @@ jobs:
     needs: build-and-analyze
 
     steps:
+      - name: ⬇️ Checkout Repository (for Notify job)
+        uses: actions/checkout@v4
+
       - name: 📢 Update Status File
         run: |
           echo "CI/CD Workflow completed successfully" > status.txt
