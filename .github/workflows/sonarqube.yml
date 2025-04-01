@@ -32,6 +32,7 @@ jobs:
           echo "PROJECT_BASE=$(dirname "${PROJECT_DIR}")" >> $GITHUB_ENV
           echo "PYTHONPATH=${PROJECT_BASE}" >> $GITHUB_ENV
           echo "✅ Found Django project at: ${PROJECT_DIR}"
+      
       - name: 📞 Install Dependencies
         run: |
           cd "$PROJECT_DIR"
@@ -40,31 +41,14 @@ jobs:
           if [ -f "requirements.txt" ]; then
             pip install -r requirements.txt
           fi
-      - name: 🤖 Setup Test Environment
-        run: |
-          cd "$PROJECT_DIR"
-          if [ ! -d "tests" ]; then
-            mkdir -p tests
-            echo "from django.test import TestCase" > tests/test_example.py
-            echo "class ExampleTest(TestCase):" >> tests/test_example.py
-            echo "    def test_example(self):" >> tests/test_example.py
-            echo "        self.assertTrue(True)" >> tests/test_example.py
-          fi
-          if [ ! -f "tests/test_example.py" ]; then
-            echo "❌ Failed to create test file!"
-            exit 1
-          fi
+      
       - name: 📊 Run Tests and Generate Coverage
         run: |
           cd "$PROJECT_DIR"
           python -m coverage run --source=. manage.py test || true
           python -m coverage xml -o coverage.xml
-          if [ ! -f "coverage.xml" ]; then
-            echo "❌ Coverage file not generated! Creating empty one..."
-            echo '<coverage version="1.0"></coverage>' > coverage.xml
-          fi
-          echo "Coverage report generated at:"
-          ls -la coverage.xml
+          echo "SONAR_COVERAGE_REPORT=coverage.xml" >> $GITHUB_ENV
+
       - name: 🛠️ Install SonarScanner
         run: |
           sudo apt-get update
@@ -73,6 +57,7 @@ jobs:
           unzip sonar-scanner-cli-5.0.1.3006-linux.zip
           sudo mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
           echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
+      
       - name: 🔎 Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -85,66 +70,45 @@ jobs:
             -Dsonar.host.url="$SONAR_HOST_URL" \
             -Dsonar.token="$SONAR_TOKEN" \
             -Dsonar.python.version=3.9 \
-            -Dsonar.python.coverage.reportPaths=coverage.xml \
+            -Dsonar.python.coverage.reportPaths=$SONAR_COVERAGE_REPORT \
             -Dsonar.working.directory="$PROJECT_DIR/.scannerwork"
+      
       - name: 📊 Check SonarQube Quality Gate
         id: sonar_status
         run: |
           sleep 10
-          STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: \
-            "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project" \
-            | jq -r '.projectStatus.status')
-
-          SCORE=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: \
-            "$SONAR_HOST_URL/api/measures/component?component=my-django-project&metricKeys=coverage" \
-            | jq -r '.component.measures[0].value')
-
-          echo "SonarQube Status: $STATUS"
-          echo "SonarQube Score: $SCORE"
-
-          echo "SONAR_SCORE=$SCORE" >> $GITHUB_ENV
+          STATUS=$(curl -s -u "${{ secrets.SONAR_TOKEN }}:" "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project" | jq -r '.projectStatus.status')
+          SCORE=$(curl -s -u "${{ secrets.SONAR_TOKEN }}:" "$SONAR_HOST_URL/api/measures/component?component=my-django-project&metricKeys=coverage" | jq -r '.component.measures[0].value')
+          SCORE_INT=${SCORE%.*}
+          echo "SONAR_SCORE=$SCORE_INT" >> $GITHUB_ENV
           echo "SONAR_STATUS=$STATUS" >> $GITHUB_ENV
-
-          if [ "$STATUS" = "OK" ] && [ "$SCORE" -ge 80 ]; then
+          if [[ "$STATUS" == "OK" ]] && [[ "$SCORE_INT" -ge 80 ]]; then
             echo "✅ Code Quality Approved"
             echo "APPROVED=true" >> $GITHUB_ENV
           else
             echo "❌ Code Quality Not Approved"
             echo "APPROVED=false" >> $GITHUB_ENV
-
-      - name: 📧 Send Email Notification - Approved
-        if: env.APPROVED == 'true'
+          fi
+      
+      - name: 📧 Send Email Notification
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 587
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "✅ Code Quality Passed"
-          body: "🎉 Your code passed SonarQube analysis with a score of ${{ env.SONAR_SCORE }}%. ✅"
+          subject: ${{ env.APPROVED == 'true' && '✅ Code Quality Passed' || '❌ Code Quality Failed' }}
+          body: "Your code analysis completed. SonarQube score: ${{ env.SONAR_SCORE }}%. "
           to: developer@example.com
           from: CI/CD Pipeline
 
-      - name: 📧 Send Email Notification - Not Approved
-        if: env.APPROVED == 'false'
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 587
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "❌ Code Quality Failed"
-          body: "😞 Your code failed SonarQube analysis. Fix the issues and retry."
-          to: developer@example.com
-          from: CI/CD Pipeline
   notify:
     runs-on: ubuntu-latest
     needs: build-and-analyze
-
     steps:
       - name: 📢 Notify via GitHub Issues
         run: |
-          gh issue create --title "CI/CD Workflow Success" --body "Your Django CI/CD workflow with SonarQube has completed successfully." --repo $GITHUB_REPOSITORY
+          gh issue create --title "CI/CD Workflow Result" --body "SonarQube Analysis: ${{ env.SONAR_STATUS }} with score ${{ env.SONAR_SCORE }}%" --repo $GITHUB_REPOSITORY
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
