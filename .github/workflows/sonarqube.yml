@@ -69,35 +69,55 @@ jobs:
             -Dsonar.scm.revision=$GITHUB_SHA \
             -Dsonar.sources=. \
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/** 
-          echo "SONAR_STATUS=success" >> $GITHUB_ENV
 
-      - name: Capture SonarQube Failure
-        if: failure()
-        run: echo "SONAR_STATUS=failure" >> $GITHUB_ENV
+      - name: Check SonarQube Quality Gate Status
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          echo "Fetching SonarQube quality gate results..."
+          PROJECT_KEY="${{ github.repository_owner }}_${{ github.event.repository.name }}"
+          API_URL="$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$PROJECT_KEY"
 
-      - name: Create GitHub Issue for SonarQube Result
+          RESPONSE=$(curl -s -u "$SONAR_TOKEN:" "$API_URL")
+          echo "SonarQube API Response: $RESPONSE"
+
+          QUALITY_STATUS=$(echo "$RESPONSE" | jq -r '.projectStatus.status')
+          COVERAGE=$(echo "$RESPONSE" | jq -r '.projectStatus.conditions[] | select(.metricKey=="coverage") | .value')
+
+          echo "Quality Gate Status: $QUALITY_STATUS"
+          echo "Coverage: $COVERAGE%"
+
+          if [ -z "$COVERAGE" ] || [ "$COVERAGE" == "null" ]; then
+            echo "COVERAGE=0" >> $GITHUB_ENV
+          else
+            echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
+          fi
+
+      - name: Determine Pass/Fail Criteria
+        run: |
+          COVERAGE=${{ env.COVERAGE }}
+          if (( $(echo "$COVERAGE >= 80" | bc -l) )); then
+            echo "SONAR_STATUS=success" >> $GITHUB_ENV
+          else
+            echo "SONAR_STATUS=failure" >> $GITHUB_ENV
+          fi
+
+      - name: Create GitHub Issue if Coverage Below 80%
+        if: env.SONAR_STATUS == 'failure'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ "$SONAR_STATUS" == "success" ]]; then
-            TITLE="✅ SonarQube Analysis Passed: ${{ github.sha }}"
-            LABEL="success"
-            BODY="SonarQube analysis passed successfully for commit: **${{ github.sha }}** 🚀  
-            🔗 **Branch**: ${{ github.ref }}  
-            📂 **Repository**: ${{ github.repository }}  
-            🛠 **Triggered By**: ${{ github.actor }}  
+          TITLE="🚨 SonarQube Coverage Below 80%: ${{ github.sha }}"
+          LABEL="bug"
+          BODY="SonarQube analysis failed due to insufficient code coverage. ❌  
 
-            Check the [GitHub Actions logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
-          else
-            TITLE="🚨 SonarQube Analysis Failed: ${{ github.sha }}"
-            LABEL="bug"
-            BODY="SonarQube analysis failed for commit: **${{ github.sha }}** ❌  
-            🔗 **Branch**: ${{ github.ref }}  
-            📂 **Repository**: ${{ github.repository }}  
-            🛠 **Triggered By**: ${{ github.actor }}  
+          🔗 **Branch**: ${{ github.ref }}  
+          📂 **Repository**: ${{ github.repository }}  
+          🛠 **Triggered By**: ${{ github.actor }}  
+          📊 **Code Coverage**: ${{ env.COVERAGE }}% (must be **≥80%**)  
 
-            Please check the [GitHub Actions logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for more details."
-          fi
+          Check the [GitHub Actions logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
 
           gh issue create --title "$TITLE" \
                           --body "$BODY" \
