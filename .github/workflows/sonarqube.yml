@@ -9,10 +9,6 @@ on:
 env:
   SONAR_PROJECT_KEY: ${{ github.repository_owner }}_${{ github.event.repository.name }}
   SONAR_PROJECT_NAME: ${{ github.repository }}
-  WORKSPACE: ${{ github.workspace }}
-  LANG: C.UTF-8
-  LC_ALL: C.UTF-8
-  PYTHONUTF8: 1
   NODE_VERSION: '18'
   SONAR_SCANNER_VERSION: "5.0.1.3006"
 
@@ -25,14 +21,12 @@ jobs:
       security-events: write
       checks: write
       pull-requests: read
-      issues: write  # Needed for creating GitHub Issues
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -45,41 +39,32 @@ jobs:
         run: |
           echo "PYTHON_PROJECT=false" >> $GITHUB_ENV
           echo "JS_PROJECT=false" >> $GITHUB_ENV
+          echo "ANGULAR_PROJECT=false" >> $GITHUB_ENV
+          
           if find . -name '*.py' | grep -q .; then
             echo "PYTHON_PROJECT=true" >> $GITHUB_ENV
           fi
           if find . -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' | grep -q .; then
             echo "JS_PROJECT=true" >> $GITHUB_ENV
           fi
-
-      - name: Check for package.json
-        id: check_npm
-        run: |
-          if [ -f "package.json" ]; then
-            echo "HAS_PACKAGE_JSON=true" >> $GITHUB_ENV
-          else
-            echo "HAS_PACKAGE_JSON=false" >> $GITHUB_ENV
+          if [ -f "angular.json" ]; then
+            echo "ANGULAR_PROJECT=true" >> $GITHUB_ENV
           fi
 
       - name: Setup Node.js
-        if: env.JS_PROJECT == 'true' && env.HAS_PACKAGE_JSON == 'true'
+        if: env.JS_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install JavaScript Dependencies
-        if: env.JS_PROJECT == 'true' && env.HAS_PACKAGE_JSON == 'true'
+      - name: Install JavaScript Dependencies & Run Tests
+        if: env.JS_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
         run: |
           npm install --no-audit --no-fund --loglevel=error
-
-      - name: Run JavaScript Tests
-        if: env.JS_PROJECT == 'true' && env.HAS_PACKAGE_JSON == 'true'
-        run: |
           mkdir -p test-results coverage
-          npx jest --coverage --coverageReporters=lcov --passWithNoTests || echo "JS tests completed with warnings"
-          [ -f "coverage/lcov.info" ] || { echo "TN:\nend_of_record" > coverage/lcov.info; }
+          npx jest --coverage --passWithNoTests || echo "JS tests completed with warnings"
 
-      - name: Install Python Dependencies
+      - name: Install Python Dependencies & Run Tests
         if: env.PYTHON_PROJECT == 'true'
         run: |
           python -m pip install --upgrade pip
@@ -87,14 +72,8 @@ jobs:
             python -m pip install -r requirements.txt
           fi
           python -m pip install coverage pytest pytest-cov
-
-      - name: Run Python Tests
-        if: env.PYTHON_PROJECT == 'true'
-        run: |
-          mkdir -p test-results
-          python -m pytest --cov=. --cov-report=xml:coverage.xml --junitxml=junit-results.xml -v || echo "Python tests completed with warnings"
-          [ -f "coverage.xml" ] || { echo '<coverage/>' > coverage.xml; }
-          [ -f "junit-results.xml" ] || { echo '<testsuites/>' > junit-results.xml; }
+          mkdir -p test-results coverage
+          python -m pytest --cov=. --cov-report=xml:coverage.xml --junitxml=junit-results.xml || echo "Python tests completed with warnings"
 
       - name: Install SonarScanner
         run: |
@@ -107,7 +86,6 @@ jobs:
           mv "/tmp/sonar-scanner-$SONAR_SCANNER_VERSION-linux" "$SCANNER_DIR"
           rm /tmp/sonar-scanner.zip
           echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
-          echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
 
       - name: Run SonarQube Analysis
         id: sonar
@@ -120,10 +98,6 @@ jobs:
             "-Dsonar.projectName=$SONAR_PROJECT_NAME"
             "-Dsonar.host.url=$SONAR_HOST_URL"
             "-Dsonar.login=$SONAR_TOKEN"
-            "-Dsonar.sourceEncoding=UTF-8"
-            "-Dsonar.scm.provider=git"
-            "-Dsonar.scm.revision=$GITHUB_SHA"
-            "-Dsonar.working.directory=$RUNNER_TEMP/.sonar"
             "-Dsonar.sources=."
             "-Dsonar.tests=."
             "-Dsonar.test.inclusions=**/*.test.*,**/__tests__/**/*.*"
@@ -141,11 +115,17 @@ jobs:
             )
           fi
           sonar-scanner "${properties[@]}"
-      
-      - name: Extract SonarQube Coverage
+
+      - name: Fetch SonarQube Coverage
         id: coverage_check
         run: |
-          COVERAGE=$(jq '.component.measures[] | select(.metric == "coverage") | .value' sonar-report.json)
+          sleep 10  # Give SonarQube some time to process results
+          COVERAGE=$(curl -s -u "${{ secrets.SONAR_TOKEN }}:" \
+            "${{ secrets.SONAR_HOST_URL }}/api/measures/component?component=$SONAR_PROJECT_KEY&metricKeys=coverage" | jq -r '.component.measures[0].value // "0"')
+
+          echo "Coverage: $COVERAGE%"
+          echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
+          
           if (( $(echo "$COVERAGE >= 80" | bc -l) )); then
             echo "COVERAGE_STATUS=passed" >> $GITHUB_ENV
           else
