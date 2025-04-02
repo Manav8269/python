@@ -62,14 +62,24 @@ jobs:
           SONAR_HOST_URL: "https://7bca-27-107-135-240.ngrok-free.app"
         run: |
           cd "$PROJECT_DIR"
-          /opt/sonar-scanner/bin/sonar-scanner \
+          RETRY_COUNT=0
+          MAX_RETRIES=5
+          until /opt/sonar-scanner/bin/sonar-scanner \
             -Dsonar.projectKey=my-django-project \
             -Dsonar.sources=. \
             -Dsonar.host.url="$SONAR_HOST_URL" \
             -Dsonar.token="$SONAR_TOKEN" \
             -Dsonar.python.version=3.9 \
             -Dsonar.python.coverage.reportPaths=coverage.xml \
-            -Dsonar.working.directory="$PROJECT_DIR/.scannerwork"
+            -Dsonar.working.directory="$PROJECT_DIR/.scannerwork"; do
+            RETRY_COUNT=$((RETRY_COUNT+1))
+            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+              echo "❌ SonarQube analysis failed after $MAX_RETRIES attempts."
+              exit 1
+            fi
+            echo "🔄 Retrying SonarQube analysis ($RETRY_COUNT/$MAX_RETRIES)..."
+            sleep 10
+          done
 
       - name: 📊 Check SonarQube Quality Gate
         id: sonar_status
