@@ -1,4 +1,4 @@
-name: SonarQube Code Scan
+name: SonarQube Analysis
 
 on:
   push:
@@ -10,62 +10,66 @@ on:
 
 jobs:
   sonarqube:
-    name: SonarQube Analysis
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.x"
+          python-version: '3.10'
 
       - name: Install Dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install coverage
 
       - name: Run Tests and Generate Coverage Report
         run: |
           mkdir -p test-results coverage
-          coverage run -m unittest discover
-          coverage xml -o coverage.xml
+          pytest --junitxml=test-results/junit-results.xml --cov=. --cov-report=xml --cov-report=html
 
       - name: Upload Coverage Report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage.xml
 
-      - name: SonarQube Scan
+      - name: Install SonarScanner
+        run: |
+          curl -sSLo sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+          unzip -q sonar-scanner.zip
+          mv sonar-scanner-5.0.1.3006-linux sonar-scanner
+          echo "$(pwd)/sonar-scanner/bin" >> $GITHUB_PATH
+
+      - name: Run SonarQube Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
           sonar-scanner \
             -Dsonar.projectKey=Manav8269_python \
-            -Dsonar.organization=your-org-name \
-            -Dsonar.host.url=https://your-sonarqube-server.com \
-            -Dsonar.token=${{ secrets.SONAR_TOKEN }} \
+            -Dsonar.sources=. \
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.login=$SONAR_TOKEN \
             -Dsonar.python.coverage.reportPaths=coverage.xml
 
-      - name: Fetch SonarQube Coverage
+      - name: Evaluate Code Coverage
         run: |
-          if [ -f "sonar-report.json" ]; then
-            COVERAGE=$(jq '.component.measures[] | select(.metric == "coverage") | .value' sonar-report.json)
-            echo "SonarQube Coverage: $COVERAGE%"
-          else
-            echo "SonarQube report not found!"
+          COVERAGE=$(jq '.component.measures[] | select(.metric == "coverage") | .value' sonar-report.json)
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "Coverage is below 80%! Marking as failed."
             exit 1
           fi
 
-      - name: Check Coverage and Create GitHub Issue if Low
-        run: |
-          COVERAGE_VALUE=$(jq -r '.component.measures[] | select(.metric == "coverage") | .value' sonar-report.json)
-          if (( $(echo "$COVERAGE_VALUE < 80" | bc -l) )); then
-            echo "Code coverage is below 80%! Creating a GitHub issue..."
-            gh issue create --title "Low Code Coverage Alert" --body "The latest SonarQube scan detected code coverage below 80%. Please improve test coverage."
-          else
-            echo "Code coverage is satisfactory."
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create GitHub Issue if Code Fails
+        if: failure()
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Code Coverage Below 80%"
+          content-file: sonar-report.json
+          labels: bug
+          token: ${{ secrets.GITHUB_TOKEN }}
+
