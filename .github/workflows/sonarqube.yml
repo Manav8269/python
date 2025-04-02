@@ -1,7 +1,80 @@
+name: SonarQube Code Analysis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  SONAR_PROJECT_KEY: ${{ github.repository_owner }}_${{ github.event.repository.name }}
+  SONAR_PROJECT_NAME: ${{ github.repository }}
+  WORKSPACE: ${{ github.workspace }}
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  PYTHONUTF8: 1
+  NODE_VERSION: '18'
+  SONAR_SCANNER_VERSION: "5.0.1.3006"
+
+jobs:
+  analyze:
+    name: SonarQube Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      checks: write
+      pull-requests: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install SonarScanner
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y unzip
+          SCANNER_DIR="$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION"
+          mkdir -p "$HOME/.sonar"
+          curl -sSLo /tmp/sonar-scanner.zip \
+            "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION-linux.zip"
+          unzip -q /tmp/sonar-scanner.zip -d /tmp/
+          mv "/tmp/sonar-scanner-$SONAR_SCANNER_VERSION-linux" "$SCANNER_DIR"
+          rm /tmp/sonar-scanner.zip
+          echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
+          echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
+
+      - name: Run SonarQube Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          sonar-scanner \
+            -Dsonar.projectKey=$SONAR_PROJECT_KEY \
+            -Dsonar.projectName=$SONAR_PROJECT_NAME \
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.login=$SONAR_TOKEN \
+            -Dsonar.sourceEncoding=UTF-8 \
+            -Dsonar.scm.provider=git \
+            -Dsonar.scm.revision=$GITHUB_SHA \
+            -Dsonar.working.directory=$RUNNER_TEMP/.sonar \
+            -Dsonar.sources=. \
+            -Dsonar.tests=. \
+            -Dsonar.test.inclusions=**/*.test.*,**/__tests__/**/*.* \
+            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**
+
       - name: Check SonarQube Quality Gate Status
         run: |
           echo "Waiting for SonarQube analysis results..."
-          sleep 10  # Wait for SonarQube to process the results
+          sleep 10  # Give SonarQube some time to process the scan
 
           SONAR_QUALITY_GATE_URL="${{ secrets.SONAR_HOST_URL }}/api/qualitygates/project_status?projectKey=${{ env.SONAR_PROJECT_KEY }}"
           RESPONSE=$(curl -s -u "${{ secrets.SONAR_TOKEN }}:" "$SONAR_QUALITY_GATE_URL")
@@ -15,7 +88,6 @@
           else
             echo "❌ Code failed quality gate. Creating an issue for the developer..."
             echo "PASSED=false" >> $GITHUB_ENV
-          fi
 
       - name: Create GitHub Issue for Failed Quality Gate
         if: env.PASSED == 'false'
