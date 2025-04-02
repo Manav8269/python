@@ -24,8 +24,8 @@ jobs:
       contents: read
       security-events: write
       checks: write
-      pull-requests: read
-      issues: write  # Required for creating GitHub issues
+      pull-requests: write  # Updated to write for PR comments
+      issues: write
 
     steps:
       - name: Checkout Code
@@ -40,16 +40,34 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install Dependencies
+      # Added Node.js setup for React tests
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          
+      # Added Python setup for Python tests
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      # Added step to run tests before SonarQube analysis
+      - name: Install Dependencies and Run Tests
         run: |
-          npm install
-          pip install pytest pytest-cov
-
-      - name: Run Jest Tests with Coverage
-        run: npm test -- --coverage
-
-      - name: Run Pytest with Coverage
-        run: pytest --cov=birthday_logger --cov-report=xml
+          # For React/JavaScript tests
+          if [ -f package.json ]; then
+            npm ci
+            npm test -- --coverage
+          fi
+          
+          # For Python tests
+          if [ -f requirements.txt ]; then
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install pytest pytest-cov
+            pytest --cov=. --cov-report=xml
+          fi
 
       - name: Install SonarScanner
         run: |
@@ -68,6 +86,7 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Running SonarQube analysis..."
           sonar-scanner \
@@ -79,9 +98,9 @@ jobs:
             -Dsonar.scm.provider=git \
             -Dsonar.scm.revision=$GITHUB_SHA \
             -Dsonar.sources=. \
-            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/** \
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
-            -Dsonar.python.coverage.reportPaths=coverage.xml
+            -Dsonar.python.coverage.reportPaths=coverage.xml \
+            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**,**/__pycache__/**,**/*.test.js,**/*_test.py,**/test_*.py
 
       - name: Check SonarQube Quality Gate Status
         env:
@@ -97,6 +116,11 @@ jobs:
           COVERAGE=$(echo "$RESPONSE" | jq -r '.projectStatus.conditions[] | select(.metricKey=="coverage") | .value')
           echo "Quality Gate Status: $QUALITY_STATUS"
           echo "Coverage: $COVERAGE%"
+          
+          # Generate coverage details for PR comment
+          COVERAGE_DETAILS=$(echo "$RESPONSE" | jq -r '.projectStatus.conditions[] | select(.metricKey=="coverage") | "Current coverage: \(.value)%, Required: \(.errorThreshold)%"')
+          echo "COVERAGE_DETAILS=$COVERAGE_DETAILS" >> $GITHUB_ENV
+          
           if [ -z "$COVERAGE" ] || [ "$COVERAGE" == "null" ]; then
             echo "COVERAGE=0" >> $GITHUB_ENV
           else
@@ -108,9 +132,29 @@ jobs:
           COVERAGE=${{ env.COVERAGE }}
           if (( $(echo "$COVERAGE >= 80" | bc -l) )); then
             echo "SONAR_STATUS=success" >> $GITHUB_ENV
+            echo "STATUS_EMOJI=✅" >> $GITHUB_ENV
           else
             echo "SONAR_STATUS=failure" >> $GITHUB_ENV
+            echo "STATUS_EMOJI=❌" >> $GITHUB_ENV
           fi
+
+      # Add detailed PR comment with coverage info
+      - name: Add PR Comment
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=$(echo $GITHUB_REF | awk 'BEGIN { FS = "/" } ; { print $3 }')
+          COMMENT="## SonarQube Analysis Results ${{ env.STATUS_EMOJI }}
+          
+          ${{ env.COVERAGE_DETAILS }}
+          
+          - Files with low coverage:
+          $(sonar-scanner -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} -Dsonar.login=${{ secrets.SONAR_TOKEN }} -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.projectName=$SONAR_PROJECT_NAME -Dsonar.scm.disabled=true -Dsonar.scanner.dumpToFile=sonarqube-report.txt -Dsonar.analysis.mode=preview || true && cat sonarqube-report.txt | grep -A 10 "coverage.*0%" || echo "  None found")
+          
+          [View full report in SonarQube](${{ secrets.SONAR_HOST_URL }}/dashboard?id=$SONAR_PROJECT_KEY)"
+          
+          gh pr comment $PR_NUMBER --body "$COMMENT"
 
       - name: Create GitHub Issue if Coverage Below 80%
         if: env.SONAR_STATUS == 'failure'
@@ -118,12 +162,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TITLE="🚨 SonarQube Coverage Below 80%: ${{ github.sha }}"
-          LABEL="bug"
+          LABEL="bug,technical-debt"
           BODY="SonarQube analysis failed due to insufficient code coverage. ❌  
           🔗 **Branch**: ${{ github.ref }}  
           📂 **Repository**: ${{ github.repository }}  
           🛠 **Triggered By**: ${{ github.actor }}  
           📊 **Code Coverage**: ${{ env.COVERAGE }}% (must be **≥80%**)  
+          
+          ### Recommended actions:
+          1. Add tests for untested functions
+          2. Focus on testing key business logic
+          3. Use code coverage tools locally before pushing
+          
           Check the [GitHub Actions logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
           gh issue create --title "$TITLE" \
                           --body "$BODY" \
