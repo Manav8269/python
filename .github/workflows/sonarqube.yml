@@ -27,8 +27,9 @@ jobs:
       pull-requests: read
 
     steps:
-      ...
-      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
