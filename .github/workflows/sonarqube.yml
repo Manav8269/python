@@ -26,12 +26,10 @@ jobs:
       - name: 📂 Locate Django Project
         id: find_project
         run: |
-          PROJECT_DIR=$(find . -name manage.py -printf '%h\n' | head -n 1)
+          PROJECT_DIR=$(find . -name manage.py -printf '%h
+' | head -n 1)
           [ -z "$PROJECT_DIR" ] && echo "❌ ERROR: manage.py not found!" && exit 1
           echo "PROJECT_DIR=${PROJECT_DIR}" >> $GITHUB_ENV
-          echo "PROJECT_BASE=$(dirname "${PROJECT_DIR}")" >> $GITHUB_ENV
-          echo "PYTHONPATH=${PROJECT_BASE}" >> $GITHUB_ENV
-          echo "✅ Found Django project at: ${PROJECT_DIR}"
 
       - name: 📞 Install Dependencies
         run: |
@@ -42,32 +40,11 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: 🤖 Setup Test Environment
-        run: |
-          cd "$PROJECT_DIR"
-          if [ ! -d "tests" ]; then
-            mkdir -p tests
-            echo "from django.test import TestCase" > tests/test_example.py
-            echo "class ExampleTest(TestCase):" >> tests/test_example.py
-            echo "    def test_example(self):" >> tests/test_example.py
-            echo "        self.assertTrue(True)" >> tests/test_example.py
-          fi
-          if [ ! -f "tests/test_example.py" ]; then
-            echo "❌ Failed to create test file!"
-            exit 1
-          fi
-
       - name: 📊 Run Tests and Generate Coverage
         run: |
           cd "$PROJECT_DIR"
           python -m coverage run --source=. manage.py test || true
           python -m coverage xml -o coverage.xml
-          if [ ! -f "coverage.xml" ]; then
-            echo "❌ Coverage file not generated! Creating empty one..."
-            echo '<coverage version="1.0"></coverage>' > coverage.xml
-          fi
-          echo "Coverage report generated at:"
-          ls -la coverage.xml
 
       - name: 🛠️ Install SonarScanner
         run: |
@@ -81,7 +58,7 @@ jobs:
       - name: 🔎 Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: "https://3310-27-107-135-240.ngrok-free.app"
+          SONAR_HOST_URL: "https://7bca-27-107-135-240.ngrok-free.app"
         run: |
           cd "$PROJECT_DIR"
           /opt/sonar-scanner/bin/sonar-scanner \
@@ -97,43 +74,14 @@ jobs:
         id: sonar_status
         run: |
           sleep 10
-          echo "Running status check..."
-          STATUS_RESPONSE=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: \
-            "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project")
-
-          # Debugging: print the full response from SonarQube API
-          echo "Full STATUS_RESPONSE: $STATUS_RESPONSE" 
-
-          # Check if the response is empty or malformed
-          if [ -z "$STATUS_RESPONSE" ]; then
-            echo "❌ Error: Empty response from SonarQube API"
-            exit 1
-          fi
-
-          STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.projectStatus.status')
-          if [ "$STATUS" == "null" ]; then
-            echo "❌ Error: Failed to extract project status from response"
-            exit 1
-          fi
-
-          SCORE=$(echo "$STATUS_RESPONSE" | jq -r '.component.measures[0].value')
-          if [ "$SCORE" == "null" ]; then
-            echo "❌ Error: Failed to extract coverage score from response"
-            exit 1
-          fi
+          STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project" | jq -r '.projectStatus.status')
+          SCORE=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "$SONAR_HOST_URL/api/measures/component?component=my-django-project&metricKeys=coverage" | jq -r '.component.measures[0].value')
 
           echo "SonarQube Status: $STATUS"
           echo "SonarQube Score: $SCORE"
 
           echo "SONAR_SCORE=$SCORE" >> $GITHUB_ENV
           echo "SONAR_STATUS=$STATUS" >> $GITHUB_ENV
-
-          if [ "$STATUS" = "OK" ] && [ "$SCORE" -ge 80 ]; then
-            echo "✅ Code Quality Approved"
-            echo "APPROVED=true" >> $GITHUB_ENV
-          else
-            echo "❌ Code Quality Not Approved"
-            echo "APPROVED=false" >> $GITHUB_ENV
 
   notify:
     runs-on: ubuntu-latest
@@ -142,9 +90,9 @@ jobs:
     steps:
       - name: 📢 Notify via GitHub Issues
         run: |
-          gh issue create --title "CI/CD Workflow Success" --body "Your Django CI/CD workflow with SonarQube has completed successfully." --repo $GITHUB_REPOSITORY
+          if (( $(echo "$SONAR_SCORE >= 80" | bc -l) )); then
+            gh issue create --title "✅ Quality Gate Passed" --body "🎉 Your code passed SonarQube analysis with a score of $SONAR_SCORE%. ✅" --repo $GITHUB_REPOSITORY
+          else
+            gh issue create --title "❌ Quality Gate Failed" --body "😞 Your code failed SonarQube analysis. Fix the issues and retry." --repo $GITHUB_REPOSITORY
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 🎉 Notify Completion
-        run: echo "::notice::✅ CI/CD Workflow completed successfully!"
