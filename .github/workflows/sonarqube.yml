@@ -135,3 +135,4 @@ jobs:
             **Status**: ${{ env.PASSED == 'true' && '✅ Passed' || '❌ Failed' }}
             **SonarQube Report**: [View Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})
           from: "SonarQube CI <your-email@example.com>"
+          s
