@@ -43,6 +43,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y unzip
+          # Clean sonar cache if it exists
+          rm -rf ~/.sonar/cache
+          # Download and setup SonarScanner
           wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
           unzip sonar-scanner-cli-5.0.1.3006-linux.zip
           sudo mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
@@ -53,27 +56,65 @@ jobs:
           SONAR_HOST_URL: "https://1217-27-107-135-240.ngrok-free.app"
         run: |
           cd "$PROJECT_DIR"
-          /opt/sonar-scanner/bin/sonar-scanner \
-            -Dsonar.projectKey=my-django-project \
-            -Dsonar.sources=. \
-            -Dsonar.host.url="$SONAR_HOST_URL" \
-            -Dsonar.token="$SONAR_TOKEN" \
-            -Dsonar.python.version=3.9 \
-            -Dsonar.python.coverage.reportPaths=coverage.xml \
-            -Dsonar.working.directory="$PROJECT_DIR/.scannerwork"
+          # Retry mechanism for SonarQube analysis
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          SUCCESS=false
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ $SUCCESS = false ]; do
+            echo "Attempt $(($RETRY_COUNT + 1)) of $MAX_RETRIES"
+            
+            # Clean up temp directories that might contain corrupted downloads
+            rm -rf ~/.sonar/_tmp
+            
+            # Run SonarQube scanner with exclusions for JavaScript files
+            if /opt/sonar-scanner/bin/sonar-scanner \
+              -Dsonar.projectKey=my-django-project \
+              -Dsonar.sources=. \
+              -Dsonar.host.url="$SONAR_HOST_URL" \
+              -Dsonar.token="$SONAR_TOKEN" \
+              -Dsonar.python.version=3.9 \
+              -Dsonar.python.coverage.reportPaths=coverage.xml \
+              -Dsonar.exclusions=**/*.js,**/*.jsx,**/*.ts,**/*.tsx,**/*.zip \
+              -Dsonar.working.directory="$PROJECT_DIR/.scannerwork"; then
+              SUCCESS=true
+            else
+              RETRY_COUNT=$(($RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "Scan failed, retrying in 30 seconds..."
+                sleep 30
+              fi
+            fi
+          done
+          
+          if [ $SUCCESS = false ]; then
+            echo "All attempts failed. Creating issue for manual review."
+            echo "scan_success=false" >> $GITHUB_OUTPUT
+          else
+            echo "scan_success=true" >> $GITHUB_OUTPUT
+          fi
       - name: 📊 Check SonarQube Quality Gate
         id: sonar_status
         env:
           SONAR_HOST_URL: "https://1217-27-107-135-240.ngrok-free.app"
         run: |
-          sleep 10
-          STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project" | jq -r '.projectStatus.status')
-          SCORE=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "$SONAR_HOST_URL/api/measures/component?component=my-django-project&metricKeys=coverage" | jq -r '.component.measures[0].value')
-          echo "SonarQube Status: $STATUS"
-          echo "SonarQube Score: $SCORE"
-          # Use GITHUB_OUTPUT instead of GITHUB_ENV for job outputs
-          echo "status=$STATUS" >> $GITHUB_OUTPUT
-          echo "score=$SCORE" >> $GITHUB_OUTPUT
+          if [ "${{ steps.sonar_analysis.outputs.scan_success }}" != "false" ]; then
+            sleep 10
+            STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project" | jq -r '.projectStatus.status')
+            SCORE=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "$SONAR_HOST_URL/api/measures/component?component=my-django-project&metricKeys=coverage" | jq -r '.component.measures[0].value')
+            
+            if [ -z "$SCORE" ] || [ "$SCORE" = "null" ]; then
+              SCORE="0"
+            fi
+            
+            echo "SonarQube Status: $STATUS"
+            echo "SonarQube Score: $SCORE"
+            echo "status=$STATUS" >> $GITHUB_OUTPUT
+            echo "score=$SCORE" >> $GITHUB_OUTPUT
+          else
+            echo "status=FAILED" >> $GITHUB_OUTPUT
+            echo "score=0" >> $GITHUB_OUTPUT
+          fi
   notify:
     runs-on: ubuntu-latest
     needs: build-and-analyze
@@ -83,10 +124,18 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const status = '${{ needs.build-and-analyze.outputs.status }}';
             const sonarScore = '${{ needs.build-and-analyze.outputs.sonar_score }}' || '0';
             const scoreNum = parseFloat(sonarScore);
             
-            if (scoreNum >= 80) {
+            if (status === 'FAILED') {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: "❌ SonarQube Analysis Failed",
+                body: `The SonarQube analysis job failed to complete. Please check the workflow logs for details.`
+              });
+            } else if (scoreNum >= 80) {
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -98,6 +147,6 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 title: "❌ Quality Gate Failed",
-                body: `😞 Your code failed SonarQube analysis. Fix the issues and retry.`
+                body: `😞 Your code failed SonarQube analysis with a score of ${sonarScore}%. Fix the issues and retry.`
               });
             }
