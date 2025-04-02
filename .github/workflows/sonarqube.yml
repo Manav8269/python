@@ -25,6 +25,7 @@ jobs:
       security-events: write
       checks: write
       pull-requests: read
+      issues: write  # Needed for creating GitHub Issues
 
     steps:
       - name: Checkout Code
@@ -47,22 +48,34 @@ jobs:
           if find . -name '*.py' | grep -q .; then
             echo "PYTHON_PROJECT=true" >> $GITHUB_ENV
           fi
-          if find . -name '*.js' -o -name '*.ts' -o -name '*.tsx' | grep -q .; then
+          if find . -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' | grep -q .; then
             echo "JS_PROJECT=true" >> $GITHUB_ENV
           fi
 
+      - name: Check for package.json
+        id: check_npm
+        run: |
+          if [ -f "package.json" ]; then
+            echo "HAS_PACKAGE_JSON=true" >> $GITHUB_ENV
+          else
+            echo "HAS_PACKAGE_JSON=false" >> $GITHUB_ENV
+          fi
+
       - name: Setup Node.js
-        if: env.JS_PROJECT == 'true'
+        if: env.JS_PROJECT == 'true' && env.HAS_PACKAGE_JSON == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Run JavaScript Tests
-        if: env.JS_PROJECT == 'true' && hash npm 2>/dev/null && [ -f "package.json" ]
+      - name: Install JavaScript Dependencies
+        if: env.JS_PROJECT == 'true' && env.HAS_PACKAGE_JSON == 'true'
         run: |
-          echo "Running JavaScript Tests..."
-          mkdir -p test-results coverage
           npm install --no-audit --no-fund --loglevel=error
+
+      - name: Run JavaScript Tests
+        if: env.JS_PROJECT == 'true' && env.HAS_PACKAGE_JSON == 'true'
+        run: |
+          mkdir -p test-results coverage
           npx jest --coverage --coverageReporters=lcov --passWithNoTests || echo "JS tests completed with warnings"
           [ -f "coverage/lcov.info" ] || { echo "TN:\nend_of_record" > coverage/lcov.info; }
 
@@ -78,9 +91,10 @@ jobs:
       - name: Run Python Tests
         if: env.PYTHON_PROJECT == 'true'
         run: |
+          mkdir -p test-results
           python -m pytest --cov=. --cov-report=xml:coverage.xml --junitxml=junit-results.xml -v || echo "Python tests completed with warnings"
-          [ -f "coverage.xml" ] || { echo "Generating empty coverage.xml"; echo '<coverage/>' > coverage.xml; }
-          [ -f "junit-results.xml" ] || { echo "Generating empty junit-results.xml"; echo '<testsuites/>' > junit-results.xml; }
+          [ -f "coverage.xml" ] || { echo '<coverage/>' > coverage.xml; }
+          [ -f "junit-results.xml" ] || { echo '<testsuites/>' > junit-results.xml; }
 
       - name: Install SonarScanner
         run: |
@@ -96,11 +110,11 @@ jobs:
           echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
 
       - name: Run SonarQube Analysis
+        id: sonar
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          echo "Preparing SonarQube analysis..."
           properties=(
             "-Dsonar.projectKey=$SONAR_PROJECT_KEY"
             "-Dsonar.projectName=$SONAR_PROJECT_NAME"
@@ -116,32 +130,38 @@ jobs:
             "-Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**"
           )
           if [ "$JS_PROJECT" == "true" ]; then
-            properties+=( "-Dsonar.javascript.lcov.reportPaths=coverage/lcov.info" )
+            properties+=(
+              "-Dsonar.javascript.lcov.reportPaths=coverage/lcov.info"
+            )
           fi
           if [ "$PYTHON_PROJECT" == "true" ]; then
-            properties+=( "-Dsonar.python.coverage.reportPaths=coverage.xml" "-Dsonar.python.xunit.reportPath=junit-results.xml" )
+            properties+=(
+              "-Dsonar.python.coverage.reportPaths=coverage.xml"
+              "-Dsonar.python.xunit.reportPath=junit-results.xml"
+            )
           fi
-          echo "Running SonarScanner with:"
-          printf '%s\n' "${properties[@]}"
           sonar-scanner "${properties[@]}"
-          echo "SonarQube analysis completed with status $?"
-
-      - name: Evaluate Code Quality and Create GitHub Issue
-        if: success()
+      
+      - name: Extract SonarQube Coverage
+        id: coverage_check
         run: |
-          echo "Checking SonarQube coverage results..."
-          COVERAGE=$(grep '<coverage' coverage.xml | grep -o 'line-rate="[0-9.]*"' | cut -d'"' -f2 | awk '{print $1*100}')
-          if [ -z "$COVERAGE" ]; then COVERAGE=0; fi
-          echo "Coverage Percentage: $COVERAGE"
-
+          COVERAGE=$(jq '.component.measures[] | select(.metric == "coverage") | .value' sonar-report.json)
           if (( $(echo "$COVERAGE >= 80" | bc -l) )); then
-            RESULT="✅ Code Passed (Coverage: ${COVERAGE}%)"
+            echo "COVERAGE_STATUS=passed" >> $GITHUB_ENV
           else
-            RESULT="❌ Code Failed (Coverage: ${COVERAGE}%)"
+            echo "COVERAGE_STATUS=failed" >> $GITHUB_ENV
           fi
 
-          echo "Creating GitHub Issue..."
-          gh issue create --title "SonarQube Code Quality Report" \
-            --body "$RESULT\n\nCheck the latest pipeline run for more details." \
-            --label "code-quality"
-
+      - name: Create GitHub Issue for Low Coverage
+        if: env.COVERAGE_STATUS == 'failed'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "⚠️ Code Coverage Below 80%",
+              body: "The latest SonarQube analysis shows that the code coverage is below 80%. Please improve test coverage to meet the minimum threshold.\n\n> **Coverage Report**: ${{ env.COVERAGE }}%\n\n### Suggested Actions:\n- Add more unit tests\n- Improve existing tests\n- Ensure all critical files are tested\n\n🚀 **Happy Coding!**",
+              labels: ["code-quality", "coverage"]
+            })
