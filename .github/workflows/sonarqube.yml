@@ -1,75 +1,114 @@
-name: SonarQube Analysis
+name: SonarQube Code Analysis
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
+
+env:
+  SONAR_PROJECT_KEY: ${{ github.repository_owner }}_${{ github.event.repository.name }}
+  SONAR_PROJECT_NAME: ${{ github.repository }}
+  WORKSPACE: ${{ github.workspace }}
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  PYTHONUTF8: 1
+  NODE_VERSION: '18'
+  SONAR_SCANNER_VERSION: "5.0.1.3006"
 
 jobs:
-  sonarqube:
+  analyze:
+    name: SonarQube Analysis
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      checks: write
+      pull-requests: read
+      issues: write  # Required for creating GitHub issues
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          fetch-depth: 0
+          persist-credentials: true
 
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run Tests and Generate Coverage Report
-        run: |
-          mkdir -p test-results coverage
-          pytest --junitxml=test-results/junit-results.xml --cov=. --cov-report=xml --cov-report=html
-
-      - name: Upload Coverage Report
-        uses: actions/upload-artifact@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          name: coverage-report
-          path: coverage.xml
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Install SonarScanner
         run: |
-          curl -sSLo sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
-          unzip -q sonar-scanner.zip
-          mv sonar-scanner-5.0.1.3006-linux sonar-scanner
-          echo "$(pwd)/sonar-scanner/bin" >> $GITHUB_PATH
-
+          sudo apt-get update -y && sudo apt-get install -y unzip
+          SCANNER_DIR="$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION"
+          mkdir -p "$HOME/.sonar"
+          curl -sSLo /tmp/sonar-scanner.zip \
+            "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION-linux.zip"
+          unzip -q /tmp/sonar-scanner.zip -d /tmp/
+          mv "/tmp/sonar-scanner-$SONAR_SCANNER_VERSION-linux" "$SCANNER_DIR"
+          rm /tmp/sonar-scanner.zip
+          echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
+          echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
+          echo "Running SonarQube analysis..."
           sonar-scanner \
-            -Dsonar.projectKey=Manav8269_python \
-            -Dsonar.sources=. \
+            -Dsonar.projectKey=$SONAR_PROJECT_KEY \
+            -Dsonar.projectName=$SONAR_PROJECT_NAME \
             -Dsonar.host.url=$SONAR_HOST_URL \
             -Dsonar.login=$SONAR_TOKEN \
-            -Dsonar.python.coverage.reportPaths=coverage.xml
-
-      - name: Evaluate Code Coverage
+            -Dsonar.sourceEncoding=UTF-8 \
+            -Dsonar.scm.provider=git \
+            -Dsonar.scm.revision=$GITHUB_SHA \
+            -Dsonar.sources=. \
+            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/** 
+      - name: Check SonarQube Quality Gate Status
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          COVERAGE=$(jq '.component.measures[] | select(.metric == "coverage") | .value' sonar-report.json)
-          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-            echo "Coverage is below 80%! Marking as failed."
-            exit 1
+          echo "Fetching SonarQube quality gate results..."
+          PROJECT_KEY="${{ github.repository_owner }}_${{ github.event.repository.name }}"
+          API_URL="$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$PROJECT_KEY"
+          RESPONSE=$(curl -s -u "$SONAR_TOKEN:" "$API_URL")
+          echo "SonarQube API Response: $RESPONSE"
+          QUALITY_STATUS=$(echo "$RESPONSE" | jq -r '.projectStatus.status')
+          COVERAGE=$(echo "$RESPONSE" | jq -r '.projectStatus.conditions[] | select(.metricKey=="coverage") | .value')
+          echo "Quality Gate Status: $QUALITY_STATUS"
+          echo "Coverage: $COVERAGE%"
+          if [ -z "$COVERAGE" ] || [ "$COVERAGE" == "null" ]; then
+            echo "COVERAGE=0" >> $GITHUB_ENV
+          else
+            echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
           fi
-
-      - name: Create GitHub Issue if Code Fails
-        if: failure()
-        uses: peter-evans/create-issue-from-file@v5
-        with:
-          title: "Code Coverage Below 80%"
-          content-file: sonar-report.json
-          labels: bug
-          token: ${{ secrets.GITHUB_TOKEN }}
-
+      - name: Determine Pass/Fail Criteria
+        run: |
+          COVERAGE=${{ env.COVERAGE }}
+          if (( $(echo "$COVERAGE >= 80" | bc -l) )); then
+            echo "SONAR_STATUS=success" >> $GITHUB_ENV
+          else
+            echo "SONAR_STATUS=failure" >> $GITHUB_ENV
+          fi
+      - name: Create GitHub Issue if Coverage Below 80%
+        if: env.SONAR_STATUS == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="🚨 SonarQube Coverage Below 80%: ${{ github.sha }}"
+          LABEL="bug"
+          BODY="SonarQube analysis failed due to insufficient code coverage. ❌  
+          🔗 **Branch**: ${{ github.ref }}  
+          📂 **Repository**: ${{ github.repository }}  
+          🛠 **Triggered By**: ${{ github.actor }}  
+          📊 **Code Coverage**: ${{ env.COVERAGE }}% (must be **≥80%**)  
+          Check the [GitHub Actions logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+          gh issue create --title "$TITLE" \
+                          --body "$BODY" \
+                          --label "$LABEL" \
+                          --repo ${{ github.repository }}
