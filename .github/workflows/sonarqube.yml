@@ -18,6 +18,16 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Install SonarQube Scanner
+        run: |
+          curl -o sonar-scanner-cli.zip -L "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip"
+          unzip sonar-scanner-cli.zip
+          mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
+          echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
+
+      - name: Verify SonarQube Scanner Installation
+        run: sonar-scanner --version
+
       - name: Run SonarQube Analysis
         run: |
           sonar-scanner \
@@ -28,7 +38,7 @@ jobs:
       - name: Check SonarQube Quality Gate
         id: check_quality_gate
         run: |
-          sleep 10 # Wait for SonarQube processing
+          sleep 10
           STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: \
             "https://your-sonarqube-url.com/api/qualitygates/project_status?projectKey=Manav8269_python" \
             | jq -r '.projectStatus.status')
