@@ -1,153 +1,77 @@
+env:
+  SONAR_PROJECT_KEY: ${{ github.repository_owner }}_${{ github.event.repository.name }}
+  SONAR_PROJECT_NAME: ${{ github.repository }}
+  WORKSPACE: ${{ github.workspace }}
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  PYTHONUTF8: 1
+  NODE_VERSION: '18'
+  SONAR_SCANNER_VERSION: "5.0.1.3006"
 
-name: CI/CD with SonarQube and Django
-on:
-  push:
-    branches:
-      - main
-permissions:
-  issues: write
 jobs:
-  build-and-analyze:
+  analyze:
+    name: SonarQube Analysis
     runs-on: ubuntu-latest
-    outputs:
-      sonar_status: ${{ steps.sonar_status.outputs.status }}
-      sonar_score: ${{ steps.sonar_status.outputs.score }}
+    permissions:
+      contents: read
+      security-events: write
+      checks: write
+      pull-requests: read
+
     steps:
-      - name: ⬇️ Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: 🐍 Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-      - name: 📂 Locate Django Project
-        id: find_project
-        run: |
-          PROJECT_DIR=$(find . -name manage.py -printf '%h\n' | head -n 1)
-          [ -z "$PROJECT_DIR" ] && echo "❌ ERROR: manage.py not found!" && exit 1
-          echo "PROJECT_DIR=${PROJECT_DIR}" >> $GITHUB_ENV
-      - name: 📞 Install Dependencies
-        run: |
-          cd "$PROJECT_DIR"
-          pip install --upgrade pip
-          pip install pytest coverage django jq bc
-          if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt
-          fi
-      - name: 📊 Run Tests and Generate Coverage
-        run: |
-          cd "$PROJECT_DIR"
-          python -m coverage run --source=. manage.py test || true
-          python -m coverage xml -o coverage.xml
-      - name: 🛠️ Install SonarScanner
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip
-          # Clean sonar cache if it exists
-          rm -rf ~/.sonar/cache
-          # Download and setup SonarScanner
-          wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
-          unzip sonar-scanner-cli-5.0.1.3006-linux.zip
-          sudo mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
-          echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
-      - name: 🔎 Run SonarQube Analysis
+      ...
+      
+      - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: "https://1217-27-107-135-240.ngrok-free.app"
         run: |
-          cd "$PROJECT_DIR"
-          # Retry mechanism for SonarQube analysis
-          MAX_RETRIES=3
-          RETRY_COUNT=0
-          SUCCESS=false
-          
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ $SUCCESS = false ]; do
-            echo "Attempt $(($RETRY_COUNT + 1)) of $MAX_RETRIES"
-            
-            # Clean up temp directories that might contain corrupted downloads
-            rm -rf ~/.sonar/_tmp
-            
-            # Run SonarQube scanner with exclusions for JavaScript files
-            if /opt/sonar-scanner/bin/sonar-scanner \
-              -Dsonar.projectKey=my-django-project \
-              -Dsonar.sources=. \
-              -Dsonar.host.url="$SONAR_HOST_URL" \
-              -Dsonar.token="$SONAR_TOKEN" \
-              -Dsonar.python.version=3.9 \
-              -Dsonar.python.coverage.reportPaths=coverage.xml \
-              -Dsonar.exclusions=**/*.js,**/*.jsx,**/*.ts,**/*.tsx,**/*.zip \
-              -Dsonar.working.directory="$PROJECT_DIR/.scannerwork"; then
-              SUCCESS=true
-            else
-              RETRY_COUNT=$(($RETRY_COUNT + 1))
-              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                echo "Scan failed, retrying in 30 seconds..."
-                sleep 30
-              fi
-            fi
-          done
-          
-          if [ $SUCCESS = false ]; then
-            echo "All attempts failed. Creating issue for manual review."
-            echo "scan_success=false" >> $GITHUB_OUTPUT
-          else
-            echo "scan_success=true" >> $GITHUB_OUTPUT
+          echo "Preparing SonarQube analysis..."
+          properties=(
+            "-Dsonar.projectKey=$SONAR_PROJECT_KEY"
+            "-Dsonar.projectName=$SONAR_PROJECT_NAME"
+            "-Dsonar.host.url=$SONAR_HOST_URL"
+            "-Dsonar.login=$SONAR_TOKEN"
+            "-Dsonar.sourceEncoding=UTF-8"
+            "-Dsonar.scm.provider=git"
+            "-Dsonar.scm.revision=$GITHUB_SHA"
+            "-Dsonar.working.directory=$RUNNER_TEMP/.sonar"
+            "-Dsonar.sources=."
+            "-Dsonar.tests=."
+            "-Dsonar.test.inclusions=**/*.test.*,**/__tests__/**/*.*"
+            "-Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**"
+          )
+
+          if [ "$REACT_PROJECT" == "true" ] || [ "$ANGULAR_PROJECT" == "true" ]; then
+            properties+=(  
+              "-Dsonar.javascript.lcov.reportPaths=coverage/lcov.info"
+              "-Dsonar.typescript.lcov.reportPaths=coverage/lcov.info"
+              "-Dsonar.testExecutionReportPaths=test-results/sonar-test.xml"
+            )
           fi
-      - name: 📊 Check SonarQube Quality Gate
-        id: sonar_status
-        env:
-          SONAR_HOST_URL: "https://1217-27-107-135-240.ngrok-free.app"
-        run: |
-          if [ "${{ steps.sonar_analysis.outputs.scan_success }}" != "false" ]; then
-            sleep 10
-            STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project" | jq -r '.projectStatus.status')
-            SCORE=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "$SONAR_HOST_URL/api/measures/component?component=my-django-project&metricKeys=coverage" | jq -r '.component.measures[0].value')
-            
-            if [ -z "$SCORE" ] || [ "$SCORE" = "null" ]; then
-              SCORE="0"
-            fi
-            
-            echo "SonarQube Status: $STATUS"
-            echo "SonarQube Score: $SCORE"
-            echo "status=$STATUS" >> $GITHUB_OUTPUT
-            echo "score=$SCORE" >> $GITHUB_OUTPUT
-          else
-            echo "status=FAILED" >> $GITHUB_OUTPUT
-            echo "score=0" >> $GITHUB_OUTPUT
+
+          if [ "$PYTHON_PROJECT" == "true" ]; then
+            properties+=(  
+              "-Dsonar.python.coverage.reportPaths=coverage.xml"
+              "-Dsonar.python.xunit.reportPath=junit-results.xml"
+            )
           fi
-  notify:
-    runs-on: ubuntu-latest
-    needs: build-and-analyze
-    steps:
-      - name: 📢 Create GitHub Issue
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const status = '${{ needs.build-and-analyze.outputs.status }}';
-            const sonarScore = '${{ needs.build-and-analyze.outputs.sonar_score }}' || '0';
-            const scoreNum = parseFloat(sonarScore);
-            
-            if (status === 'FAILED') {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: "❌ SonarQube Analysis Failed",
-                body: `The SonarQube analysis job failed to complete. Please check the workflow logs for details.`
-              });
-            } else if (scoreNum >= 80) {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: "✅ Quality Gate Passed",
-                body: `🎉 Your code passed SonarQube analysis with a score of ${sonarScore}%. ✅`
-              });
-            } else {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: "❌ Quality Gate Failed",
-                body: `😞 Your code failed SonarQube analysis with a score of ${sonarScore}%. Fix the issues and retry.`
-              });
-            }
+
+          if [ "$REACT_PROJECT" == "true" ]; then
+            properties+=(  
+              "-Dsonar.javascript.react.reactEnabled=true"
+              "-Dsonar.javascript.file.suffixes=.js,.jsx"
+              "-Dsonar.typescript.file.suffixes=.ts,.tsx"
+            )
+          elif [ "$ANGULAR_PROJECT" == "true" ]; then
+            properties+=(  
+              "-Dsonar.angular.enabled=true"
+              "-Dsonar.typescript.file.suffixes=.ts"
+            )
+          fi
+
+          echo "Running SonarScanner with:"
+          printf '%s\n' "${properties[@]}"
+          
+          sonar-scanner "${properties[@]}"
+          echo "SonarQube analysis completed with status $?"
