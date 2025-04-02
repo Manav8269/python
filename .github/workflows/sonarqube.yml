@@ -7,10 +7,14 @@ on:
 
 permissions:
   issues: write
+  contents: read
 
 jobs:
   build-and-analyze:
     runs-on: ubuntu-latest
+    outputs:
+      sonar-status: ${{ steps.sonar_status.outputs.status }}
+      sonar-score: ${{ steps.sonar_status.outputs.score }}
 
     steps:
       - name: ⬇️ Checkout Repository
@@ -26,77 +30,72 @@ jobs:
       - name: 📂 Locate Django Project
         id: find_project
         run: |
-          PROJECT_DIR=$(find . -name manage.py -printf '%h\n' | head -n 1)
-          [ -z "$PROJECT_DIR" ] && echo "❌ ERROR: manage.py not found!" && exit 1
-          echo "PROJECT_DIR=${PROJECT_DIR}" >> $GITHUB_ENV
-
-      - name: 📞 Install Dependencies
-        run: |
-          cd "$PROJECT_DIR"
-          pip install --upgrade pip
-          pip install pytest coverage django jq bc
-          if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt
+          PROJECT_DIR=$(find . -name manage.py -exec dirname {} \; | head -n1)
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "::error::manage.py not found!"
+            exit 1
           fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
 
-      - name: 📊 Run Tests and Generate Coverage
+      - name: 📦 Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r "$PROJECT_DIR/requirements.txt" pytest coverage django
+
+      - name: 🧪 Run Tests and Generate Coverage
         run: |
           cd "$PROJECT_DIR"
-          python -m coverage run --source=. manage.py test || true
-          python -m coverage run --source=birthday_logger -m pytest test_birthday_logger.py || true
-          python -m coverage xml -o coverage.xml
+          python -m coverage run --source=. --module manage.py test
+          python -m coverage run --source=. --append -m pytest tests/
+          python -m coverage xml
           python -m coverage report
 
-      - name: 🛠️ Install SonarScanner
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip bc jq
-          wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
-          unzip sonar-scanner-cli-5.0.1.3006-linux.zip
-          sudo mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
-          echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
-
-      - name: 🔎 Run SonarQube Analysis
+      - name: 🔍 SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@master
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: "https://7bca-27-107-135-240.ngrok-free.app"
-        run: |
-          cd "$PROJECT_DIR"
-          /opt/sonar-scanner/bin/sonar-scanner \
-            -Dsonar.projectKey=my-django-project \
-            -Dsonar.sources=. \
-            -Dsonar.host.url="$SONAR_HOST_URL" \
-            -Dsonar.token="$SONAR_TOKEN" \
-            -Dsonar.python.version=3.9 \
-            -Dsonar.python.coverage.reportPaths=coverage.xml \
-            -Dsonar.working.directory="$PROJECT_DIR/.scannerwork"
+        with:
+          args: >
+            -Dsonar.projectKey=my-django-project
+            -Dsonar.python.coverage.reportPaths=coverage.xml
+            -Dsonar.python.version=3.9
+            -Dsonar.working.directory=${{ env.PROJECT_DIR }}/.scannerwork
 
-      - name: 📊 Check SonarQube Quality Gate
+      - name: 📊 Check Quality Gate
         id: sonar_status
         run: |
-          sleep 10
+          sleep 15
           STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=my-django-project" | jq -r '.projectStatus.status')
-          SCORE=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "$SONAR_HOST_URL/api/measures/component?component=my-django-project&metricKeys=coverage" | jq -r '.component.measures[0].value')
-
-          echo "SonarQube Status: $STATUS"
-          echo "SonarQube Score: $SCORE"
-
-          echo "SONAR_SCORE=$SCORE" >> $GITHUB_ENV
-          echo "SONAR_STATUS=$STATUS" >> $GITHUB_ENV
+          SCORE=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "$SONAR_HOST_URL/api/measures/component?component=my-django-project&metricKeys=coverage" | jq -r '.component.measures[] | select(.metric == "coverage").value')
+          
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          echo "score=$SCORE" >> $GITHUB_OUTPUT
 
   notify:
     runs-on: ubuntu-latest
-    needs: build-and-analyze
+    needs: [build-and-analyze]
+    if: always()
 
     steps:
-      - name: 📢 Notify via GitHub Issues
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          sudo apt-get install -y gh
-          echo "$GITHUB_TOKEN" | gh auth login --with-token
-          SONAR_SCORE=$(echo "${{ env.SONAR_SCORE }}" | tr -d '\r')
-          if [ ! -z "$SONAR_SCORE" ] && [ $(echo "$SONAR_SCORE >= 80" | bc) -eq 1 ]; then
-            gh issue create --title "✅ Quality Gate Passed" --body "🎉 Your code passed SonarQube analysis with a score of $SONAR_SCORE%. ✅" --repo $GITHUB_REPOSITORY
-          else
-            gh issue create --title "❌ Quality Gate Failed" --body "😞 Your code failed SonarQube analysis. Fix the issues and retry." --repo $GITHUB_REPOSITORY
+      - name: 📢 Create GitHub Issue
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const { sonar-status, sonar-score } = context.needs['build-and-analyze'].outputs;
+            let title, body;
+            
+            if (sonar-status === 'OK' && sonar-score >= 80) {
+              title = '✅ Quality Gate Passed';
+              body = `🎉 Your code passed SonarQube analysis with a score of ${sonar-score}%`;
+            } else {
+              title = '❌ Quality Gate Failed';
+              body = '😞 Your code failed SonarQube analysis. Please check the report for details.';
+            }
+
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body
+            });
