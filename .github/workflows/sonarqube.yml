@@ -58,7 +58,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          echo "Preparing SonarQube analysis..."
+          echo "Running SonarQube analysis..."
           sonar-scanner \
             -Dsonar.projectKey=$SONAR_PROJECT_KEY \
             -Dsonar.projectName=$SONAR_PROJECT_NAME \
@@ -69,18 +69,37 @@ jobs:
             -Dsonar.scm.revision=$GITHUB_SHA \
             -Dsonar.sources=. \
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/** 
-          echo "SonarQube analysis completed with status $?"
+          echo "SONAR_STATUS=success" >> $GITHUB_ENV
 
-      - name: Create GitHub Issue on Failure
+      - name: Capture SonarQube Failure
         if: failure()
+        run: echo "SONAR_STATUS=failure" >> $GITHUB_ENV
+
+      - name: Create GitHub Issue for SonarQube Result
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue create --title "🚨 SonarQube Analysis Failed: ${{ github.sha }}" \
-            --body "SonarQube analysis failed for commit: **${{ github.sha }}**  
+          if [[ "$SONAR_STATUS" == "success" ]]; then
+            TITLE="✅ SonarQube Analysis Passed: ${{ github.sha }}"
+            LABEL="success"
+            BODY="SonarQube analysis passed successfully for commit: **${{ github.sha }}** 🚀  
             🔗 **Branch**: ${{ github.ref }}  
             📂 **Repository**: ${{ github.repository }}  
             🛠 **Triggered By**: ${{ github.actor }}  
-            
-            Please check the [GitHub Actions logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for more details." \
-            --label "bug" --repo ${{ github.repository }}
+
+            Check the [GitHub Actions logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+          else
+            TITLE="🚨 SonarQube Analysis Failed: ${{ github.sha }}"
+            LABEL="bug"
+            BODY="SonarQube analysis failed for commit: **${{ github.sha }}** ❌  
+            🔗 **Branch**: ${{ github.ref }}  
+            📂 **Repository**: ${{ github.repository }}  
+            🛠 **Triggered By**: ${{ github.actor }}  
+
+            Please check the [GitHub Actions logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for more details."
+          fi
+
+          gh issue create --title "$TITLE" \
+                          --body "$BODY" \
+                          --label "$LABEL" \
+                          --repo ${{ github.repository }}
