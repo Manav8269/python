@@ -26,8 +26,7 @@ jobs:
       - name: 📂 Locate Django Project
         id: find_project
         run: |
-          PROJECT_DIR=$(find . -name manage.py -printf '%h
-' | head -n 1)
+          PROJECT_DIR=$(find . -name manage.py -printf '%h\n' | head -n 1)
           [ -z "$PROJECT_DIR" ] && echo "❌ ERROR: manage.py not found!" && exit 1
           echo "PROJECT_DIR=${PROJECT_DIR}" >> $GITHUB_ENV
 
@@ -35,7 +34,7 @@ jobs:
         run: |
           cd "$PROJECT_DIR"
           pip install --upgrade pip
-          pip install pytest coverage django
+          pip install pytest coverage django jq
           if [ -f "requirements.txt" ]; then
             pip install -r requirements.txt
           fi
@@ -89,10 +88,10 @@ jobs:
 
     steps:
       - name: 📢 Notify via GitHub Issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if (( $(echo "$SONAR_SCORE >= 80" | bc -l) )); then
             gh issue create --title "✅ Quality Gate Passed" --body "🎉 Your code passed SonarQube analysis with a score of $SONAR_SCORE%. ✅" --repo $GITHUB_REPOSITORY
           else
             gh issue create --title "❌ Quality Gate Failed" --body "😞 Your code failed SonarQube analysis. Fix the issues and retry." --repo $GITHUB_REPOSITORY
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
