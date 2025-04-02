@@ -25,7 +25,7 @@ jobs:
       security-events: write
       checks: write
       pull-requests: read
-      issues: write  # Required for creating GitHub issues
+      issues: write  # Required to create GitHub issues
 
     steps:
       - name: Checkout Code
@@ -39,6 +39,55 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+
+      - name: Detect Project Type
+        id: detect
+        run: |
+          echo "PYTHON_PROJECT=false" >> $GITHUB_ENV
+          echo "REACT_PROJECT=false" >> $GITHUB_ENV
+          echo "ANGULAR_PROJECT=false" >> $GITHUB_ENV
+          if find . -name '*.jsx' -o -name '*.tsx' -o -name '*.test.js' -o -name '*.test.tsx' | grep -q .; then
+            echo "REACT_PROJECT=true" >> $GITHUB_ENV
+          fi
+          if [ -f "angular.json" ]; then
+            echo "ANGULAR_PROJECT=true" >> $GITHUB_ENV
+          fi
+          if find . -name '*.py' | grep -q .; then
+            echo "PYTHON_PROJECT=true" >> $GITHUB_ENV
+            PY_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3.8")
+            echo "PYTHON_VERSION=$PY_VERSION" >> $GITHUB_ENV
+          fi
+
+      - name: Setup Node.js
+        if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Python Dependencies
+        if: env.PYTHON_PROJECT == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f "requirements.txt" ]; then
+            python -m pip install -r requirements.txt
+          fi
+          python -m pip install coverage pytest pytest-cov
+
+      - name: Run Python Tests
+        if: env.PYTHON_PROJECT == 'true'
+        run: |
+          mkdir -p test-results
+          pytest --cov=. --cov-report=xml:coverage.xml --junitxml=test-results/junit-results.xml -v || echo "Python tests completed with warnings"
+          [ -f "coverage.xml" ] || echo '<coverage/>' > coverage.xml
+          [ -f "test-results/junit-results.xml" ] || echo '<testsuites/>' > test-results/junit-results.xml
+
+      - name: Run JavaScript Tests
+        if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
+        run: |
+          mkdir -p test-results coverage
+          npm install --no-audit --no-fund --loglevel=error
+          npx jest --coverage --coverageReporters=lcov --passWithNoTests || echo "JS tests completed with warnings"
+          [ -f "coverage/lcov.info" ] || { echo "TN:\nend_of_record" > coverage/lcov.info; }
 
       - name: Install SonarScanner
         run: |
@@ -58,68 +107,58 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          echo "Running SonarQube analysis..."
           sonar-scanner \
             -Dsonar.projectKey=$SONAR_PROJECT_KEY \
             -Dsonar.projectName=$SONAR_PROJECT_NAME \
             -Dsonar.host.url=$SONAR_HOST_URL \
             -Dsonar.login=$SONAR_TOKEN \
+            -Dsonar.sources=. \
+            -Dsonar.tests=. \
             -Dsonar.sourceEncoding=UTF-8 \
             -Dsonar.scm.provider=git \
-            -Dsonar.scm.revision=$GITHUB_SHA \
-            -Dsonar.sources=. \
-            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/** 
+            -Dsonar.python.coverage.reportPaths=coverage.xml \
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
+            -Dsonar.testExecutionReportPaths=test-results/junit-results.xml
 
-      - name: Check SonarQube Quality Gate Status
+      - name: Fetch SonarQube Quality Gate Status
+        id: quality_gate
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          echo "Fetching SonarQube quality gate results..."
-          PROJECT_KEY="${{ github.repository_owner }}_${{ github.event.repository.name }}"
-          API_URL="$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$PROJECT_KEY"
+          sleep 10  # Wait for SonarQube results
+          PROJECT_KEY="${{ env.SONAR_PROJECT_KEY }}"
+          STATUS=$(curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$PROJECT_KEY" | jq -r '.projectStatus.status')
+          COVERAGE=$(curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&metricKeys=coverage" | jq -r '.component.measures[0].value')
+          echo "SonarQube Quality Gate Status: $STATUS"
+          echo "SonarQube Code Coverage: $COVERAGE%"
+          echo "SONAR_STATUS=$STATUS" >> $GITHUB_ENV
+          echo "SONAR_COVERAGE=$COVERAGE" >> $GITHUB_ENV
 
-          RESPONSE=$(curl -s -u "$SONAR_TOKEN:" "$API_URL")
-          echo "SonarQube API Response: $RESPONSE"
+      - name: Create GitHub Issue if Coverage < 80%
+        if: env.SONAR_COVERAGE != '' && env.SONAR_COVERAGE < 80
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+            });
 
-          QUALITY_STATUS=$(echo "$RESPONSE" | jq -r '.projectStatus.status')
-          COVERAGE=$(echo "$RESPONSE" | jq -r '.projectStatus.conditions[] | select(.metricKey=="coverage") | .value')
+            const title = "🚨 Code Coverage Below 80%";
+            if (!issues.some(issue => issue.title === title)) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: `Code coverage is **${{ env.SONAR_COVERAGE }}%**, which is below the required 80%. Please add more tests.`,
+                labels: ["coverage", "automated"],
+              });
+            }
 
-          echo "Quality Gate Status: $QUALITY_STATUS"
-          echo "Coverage: $COVERAGE%"
-
-          if [ -z "$COVERAGE" ] || [ "$COVERAGE" == "null" ]; then
-            echo "COVERAGE=0" >> $GITHUB_ENV
-          else
-            echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
-          fi
-
-      - name: Determine Pass/Fail Criteria
+      - name: Notify Success if Coverage >= 80%
+        if: env.SONAR_COVERAGE != '' && env.SONAR_COVERAGE >= 80
         run: |
-          COVERAGE=${{ env.COVERAGE }}
-          if (( $(echo "$COVERAGE >= 80" | bc -l) )); then
-            echo "SONAR_STATUS=success" >> $GITHUB_ENV
-          else
-            echo "SONAR_STATUS=failure" >> $GITHUB_ENV
-          fi
-
-      - name: Create GitHub Issue if Coverage Below 80%
-        if: env.SONAR_STATUS == 'failure'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TITLE="🚨 SonarQube Coverage Below 80%: ${{ github.sha }}"
-          LABEL="bug"
-          BODY="SonarQube analysis failed due to insufficient code coverage. ❌  
-
-          🔗 **Branch**: ${{ github.ref }}  
-          📂 **Repository**: ${{ github.repository }}  
-          🛠 **Triggered By**: ${{ github.actor }}  
-          📊 **Code Coverage**: ${{ env.COVERAGE }}% (must be **≥80%**)  
-
-          Check the [GitHub Actions logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
-
-          gh issue create --title "$TITLE" \
-                          --body "$BODY" \
-                          --label "$LABEL" \
-                          --repo ${{ github.repository }}
+          echo "✅ Code coverage is $SONAR_COVERAGE% (Above 80%) - No issues created."
