@@ -1,4 +1,4 @@
-name: SonarQube Code Analysis
+name: SonarQube Code Analysis 
 
 on:
   push:
@@ -57,82 +57,68 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          sonar-scanner \
-            -Dsonar.projectKey=$SONAR_PROJECT_KEY \
-            -Dsonar.projectName=$SONAR_PROJECT_NAME \
-            -Dsonar.host.url=$SONAR_HOST_URL \
-            -Dsonar.login=$SONAR_TOKEN \
-            -Dsonar.sourceEncoding=UTF-8 \
-            -Dsonar.scm.provider=git \
-            -Dsonar.scm.revision=$GITHUB_SHA \
-            -Dsonar.working.directory=$RUNNER_TEMP/.sonar \
-            -Dsonar.sources=. \
-            -Dsonar.tests=. \
-            -Dsonar.test.inclusions=**/*.test.*,**/__tests__/**/*.* \
-            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**
+          echo "Preparing SonarQube analysis..."
+          properties=(
+            "-Dsonar.projectKey=$SONAR_PROJECT_KEY"
+            "-Dsonar.projectName=$SONAR_PROJECT_NAME"
+            "-Dsonar.host.url=$SONAR_HOST_URL"
+            "-Dsonar.login=$SONAR_TOKEN"
+            "-Dsonar.sourceEncoding=UTF-8"
+            "-Dsonar.scm.provider=git"
+            "-Dsonar.scm.revision=$GITHUB_SHA"
+            "-Dsonar.working.directory=$RUNNER_TEMP/.sonar"
+            "-Dsonar.sources=."
+            "-Dsonar.tests=."
+            "-Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**"
+          )
+          
+          echo "Running SonarScanner with:"
+          printf '%s\n' "${properties[@]}"
+          
+          sonar-scanner "${properties[@]}"
+          echo "SonarQube analysis completed."
 
       - name: Check SonarQube Quality Gate Status
         run: |
-          echo "Waiting for SonarQube analysis results..."
-          sleep 10  # Give SonarQube some time to process the scan
+          echo "Checking SonarQube Quality Gate status..."
+          SONAR_PROJECT_KEY="${{ env.SONAR_PROJECT_KEY }}"
+          SONAR_HOST_URL="${{ secrets.SONAR_HOST_URL }}"
+          SONAR_TOKEN="${{ secrets.SONAR_TOKEN }}"
 
-          SONAR_QUALITY_GATE_URL="${{ secrets.SONAR_HOST_URL }}/api/qualitygates/project_status?projectKey=${{ env.SONAR_PROJECT_KEY }}"
-          RESPONSE=$(curl -s -u "${{ secrets.SONAR_TOKEN }}:" "$SONAR_QUALITY_GATE_URL")
-          STATUS=$(echo "$RESPONSE" | jq -r '.projectStatus.status')
+          # Wait for analysis to complete
+          sleep 30  
 
-          echo "SonarQube Quality Gate Status: $STATUS"
+          # Fetch Quality Gate Status
+          STATUS=$(curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$SONAR_PROJECT_KEY" | jq -r '.projectStatus.status')
+
+          echo "Quality Gate Status: $STATUS"
 
           if [ "$STATUS" == "OK" ]; then
-            echo "✅ Code passed quality gate. Creating an approval issue..."
-            echo "PASSED=true" >> $GITHUB_ENV
+            echo "✅ Quality Gate Passed!"
+            echo "QUALITY_GATE_PASSED=true" >> $GITHUB_ENV
           else
-            echo "❌ Code failed quality gate. Creating an issue for the developer..."
-            echo "PASSED=false" >> $GITHUB_ENV
+            echo "❌ Quality Gate Failed!"
+            echo "QUALITY_GATE_PASSED=false" >> $GITHUB_ENV
+          fi
 
-      - name: Create GitHub Issue for Failed Quality Gate
-        if: env.PASSED == 'false'
-        uses: peter-evans/create-issue-from-file@v5
-        with:
-          title: "❌ SonarQube Quality Gate Failed"
-          body: |
-            The latest code analysis failed the SonarQube quality gate.
-            Please review the issues and take corrective action.
-            
-            **Project**: `${{ env.SONAR_PROJECT_NAME }}`
-            **Status**: ❌ Failed
-            **SonarQube URL**: [View Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})
-          labels: bug, sonar-issue
-          assignees: ${{ github.actor }}
+      - name: Create GitHub Issue for Quality Gate Failure
+        if: env.QUALITY_GATE_PASSED == 'false'
+        run: |
+          gh issue create --title "🚨 Quality Gate Failed" \
+                          --body "The SonarQube Quality Gate has failed. Please check the code coverage and resolve the issues." \
+                          --repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create GitHub Issue for Quality Gate Pass
-        if: env.PASSED == 'true'
-        uses: peter-evans/create-issue-from-file@v5
-        with:
-          title: "✅ Code Approved - SonarQube Quality Gate Passed"
-          body: |
-            The latest code analysis **passed** the SonarQube quality gate. The code is now approved.
-            
-            **Project**: `${{ env.SONAR_PROJECT_NAME }}`
-            **Status**: ✅ Passed
-            **SonarQube URL**: [View Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})
-          labels: approved, sonar-passed
-          assignees: ${{ github.actor }}
-
-      - name: Send Email Notification (Optional)
-        if: always()
+      - name: Send Email Notification for Quality Gate Failure
+        if: env.QUALITY_GATE_PASSED == 'false'
         uses: dawidd6/action-send-mail@v3
         with:
-          server_address: smtp.example.com
+          server_address: smtp.gmail.com
           server_port: 587
-          username: "your-email@example.com"
+          username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "SonarQube Quality Gate Report"
-          to: "developer@example.com"
-          body: |
-            SonarQube Analysis Report:
-            
-            **Project**: `${{ env.SONAR_PROJECT_NAME }}`
-            **Status**: ${{ env.PASSED == 'true' && '✅ Passed' || '❌ Failed' }}
-            **SonarQube Report**: [View Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})
-          from: "SonarQube CI <your-email@example.com>"
-          
+          subject: "🚨 Quality Gate Failed for ${{ github.repository }}"
+          body: "The SonarQube Quality Gate failed. Please review the coverage report."
+          to: developer@example.com
+          from: GitHub Actions Bot
