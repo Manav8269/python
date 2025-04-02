@@ -91,8 +91,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          SONAR_SCORE=${{ env.SONAR_SCORE }}
-          if [ ! -z "$SONAR_SCORE" ] && [ "$(echo "$SONAR_SCORE >= 80" | bc)" -eq 1 ]; then
+          SONAR_SCORE=$(echo "${{ env.SONAR_SCORE }}" | tr -d '\r')
+          if [ ! -z "$SONAR_SCORE" ] && [ $(echo "$SONAR_SCORE >= 80" | bc) -eq 1 ]; then
             gh issue create --title "✅ Quality Gate Passed" --body "🎉 Your code passed SonarQube analysis with a score of $SONAR_SCORE%. ✅" --repo $GITHUB_REPOSITORY
           else
             gh issue create --title "❌ Quality Gate Failed" --body "😞 Your code failed SonarQube analysis. Fix the issues and retry." --repo $GITHUB_REPOSITORY
