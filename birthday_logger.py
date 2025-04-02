@@ -68,3 +68,4 @@ if __name__ == "__main__":
             time.sleep(3)
     except KeyboardInterrupt:
         print("\n🎂 Birthday logger stopped.")
+s
