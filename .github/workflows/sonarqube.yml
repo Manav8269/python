@@ -1,4 +1,3 @@
-
 name: SonarQube Code Analysis
 
 on:
@@ -26,6 +25,7 @@ jobs:
       security-events: write
       checks: write
       pull-requests: read
+      issues: write  # Required for creating GitHub issues
 
     steps:
       - name: Checkout Code
@@ -40,134 +40,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Detect Project Type
-        id: detect
-        run: |
-          echo "PYTHON_PROJECT=false" >> $GITHUB_ENV
-          echo "REACT_PROJECT=false" >> $GITHUB_ENV
-          echo "ANGULAR_PROJECT=false" >> $GITHUB_ENV
-          if find . -name '*.jsx' -o -name '*.tsx' -o -name '*.test.js' -o -name '*.test.tsx' | grep -q .; then
-            echo "REACT_PROJECT=true" >> $GITHUB_ENV
-            echo "SOURCE_DIR=$(find . -name '*.jsx' -o -name '*.tsx' | head -1 | xargs dirname)" >> $GITHUB_ENV
-          fi
-          if [ -f "angular.json" ]; then
-            echo "ANGULAR_PROJECT=true" >> $GITHUB_ENV
-            echo "SOURCE_DIR=src" >> $GITHUB_ENV
-          fi
-          if find . -name '*.py' | grep -q .; then
-            echo "PYTHON_PROJECT=true" >> $GITHUB_ENV
-            PY_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3.8")
-            echo "PYTHON_VERSION=$PY_VERSION" >> $GITHUB_ENV
-          fi
-      - name: Setup Node.js
-        if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Initialize JavaScript Project
-        if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
-        run: |
-          if [ ! -f "package.json" ]; then
-            npm init -y
-            
-            if [ "$REACT_PROJECT" == "true" ]; then
-              npm install react react-dom @testing-library/react @testing-library/jest-dom jest jest-environment-jsdom jest-junit babel-jest @babel/preset-env @babel/preset-react --save-dev
-              
-              echo '{
-                "presets": [
-                  "@babel/preset-env",
-                  ["@babel/preset-react", { "runtime": "automatic" }]
-                ]
-              }' > babel.config.json
-              echo 'import "@testing-library/jest-dom";' > jest.setup.js
-            else
-              npm install jest jest-junit --save-dev
-            fi
-            echo '{
-              "collectCoverage": true,
-              "coverageReporters": ["lcov", "text"],
-              "testEnvironment": "jsdom",
-              "setupFilesAfterEnv": ["<rootDir>/jest.setup.js"],
-              "transform": {
-                "^.+\\.[jt]sx?$": "babel-jest"
-              },
-              "moduleNameMapper": {
-                "\\.(css|less|scss|sass)$": "identity-obj-proxy"
-              },
-              "reporters": [
-                "default",
-                ["jest-junit", { 
-                  "outputDirectory": "test-results",
-                  "outputName": "jest-junit.xml",
-                  "suiteName": "jest tests",
-                  "classNameTemplate": "{classname}",
-                  "titleTemplate": "{title}",
-                  "ancestorSeparator": " > ",
-                  "usePathForSuiteName": "true"
-                }]
-              ]
-            }' > jest.config.json
-          fi
-          if [ ! -f "package-lock.json" ] && [ ! -f "yarn.lock" ]; then
-            npm install --package-lock-only --no-audit --no-fund --loglevel=error
-          fi
-          npm install --no-audit --no-fund --loglevel=error
-      - name: Run JavaScript Tests
-        if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
-        run: |
-          mkdir -p test-results coverage
-          
-          npx jest --coverage --passWithNoTests --collectCoverageFrom="**/*.{js,jsx,ts,tsx}" || echo "Tests completed with warnings"
-          
-          if [ ! -f "coverage/lcov.info" ]; then
-            echo "TN:" > coverage/lcov.info
-            find . -name '*.jsx' -o -name '*.tsx' -o -name '*.js' -o -name '*.ts' | while read file; do
-              echo "SF:$file" >> coverage/lcov.info
-              echo "end_of_record" >> coverage/lcov.info
-            done
-          fi
-          
-          if [ ! -f "test-results/jest-junit.xml" ]; then
-            echo '<?xml version="1.0" encoding="UTF-8"?>
-            <testsuites name="jest tests">
-              <testsuite name="jest tests" tests="0" failures="0" errors="0" skipped="0" timestamp="$(date +%Y-%m-%dT%H:%M:%S)" time="0">
-              </testsuite>
-            </testsuites>' > test-results/jest-junit.xml
-          fi
-          # Convert jest-junit format to SonarQube expected format
-          if [ -f "test-results/jest-junit.xml" ]; then
-            echo '<?xml version="1.0" encoding="UTF-8"?>
-            <testExecutions version="1">' > test-results/sonar-test.xml
-            
-            # Extract test cases from jest-junit.xml and reformat for SonarQube
-            grep -o '<testcase .*/>' test-results/jest-junit.xml | while read -r testcase; do
-              classname=$(echo "$testcase" | grep -o 'classname="[^"]*"' | cut -d'"' -f2)
-              name=$(echo "$testcase" | grep -o 'name="[^"]*"' | cut -d'"' -f2)
-              time=$(echo "$testcase" | grep -o 'time="[^"]*"' | cut -d'"' -f2)
-              
-              # Get file path from classname (simplified example)
-              filepath=$(echo "$classname" | tr '.' '/').js
-              
-              echo '  <testCase name="'"$name"'" duration="'"$time"'" status="passed" file="'"$filepath"'"/>' >> test-results/sonar-test.xml
-            done
-            
-            echo '</testExecutions>' >> test-results/sonar-test.xml
-          fi
-      - name: Install Python Dependencies
-        if: env.PYTHON_PROJECT == 'true'
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f "requirements.txt" ]; then
-            python -m pip install -r requirements.txt
-          fi
-          python -m pip install coverage pytest pytest-cov
-      - name: Run Python Tests
-        if: env.PYTHON_PROJECT == 'true'
-        run: |
-          python -m pytest --cov=. --cov-report=xml:coverage.xml --junitxml=junit-results.xml -v || echo "Python tests completed with warnings"
-          [ -f "coverage.xml" ] || { echo "Generating empty coverage.xml"; echo '<coverage/>' > coverage.xml; }
-          [ -f "junit-results.xml" ] || { echo "Generating empty junit-results.xml"; echo '<testsuites/>' > junit-results.xml; }
       - name: Install SonarScanner
         run: |
           sudo apt-get update -y && sudo apt-get install -y unzip
@@ -180,53 +52,35 @@ jobs:
           rm /tmp/sonar-scanner.zip
           echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
           echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
+
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
           echo "Preparing SonarQube analysis..."
-          properties=(
-            "-Dsonar.projectKey=$SONAR_PROJECT_KEY"
-            "-Dsonar.projectName=$SONAR_PROJECT_NAME"
-            "-Dsonar.host.url=$SONAR_HOST_URL"
-            "-Dsonar.login=$SONAR_TOKEN"
-            "-Dsonar.sourceEncoding=UTF-8"
-            "-Dsonar.scm.provider=git"
-            "-Dsonar.scm.revision=$GITHUB_SHA"
-            "-Dsonar.working.directory=$RUNNER_TEMP/.sonar"
-            "-Dsonar.sources=."
-            "-Dsonar.tests=."
-            "-Dsonar.test.inclusions=**/*.test.*,**/__tests__/**/*.*"
-            "-Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**"
-          )
-          if [ "$REACT_PROJECT" == "true" ] || [ "$ANGULAR_PROJECT" == "true" ]; then
-            properties+=(
-              "-Dsonar.javascript.lcov.reportPaths=coverage/lcov.info"
-              "-Dsonar.typescript.lcov.reportPaths=coverage/lcov.info"
-              "-Dsonar.testExecutionReportPaths=test-results/sonar-test.xml"
-            )
-          fi
-          if [ "$PYTHON_PROJECT" == "true" ]; then
-            properties+=(
-              "-Dsonar.python.coverage.reportPaths=coverage.xml"
-              "-Dsonar.python.xunit.reportPath=junit-results.xml"
-            )
-          fi
-          if [ "$REACT_PROJECT" == "true" ]; then
-            properties+=(
-              "-Dsonar.javascript.react.reactEnabled=true"
-              "-Dsonar.javascript.file.suffixes=.js,.jsx"
-              "-Dsonar.typescript.file.suffixes=.ts,.tsx"
-            )
-          elif [ "$ANGULAR_PROJECT" == "true" ]; then
-            properties+=(
-              "-Dsonar.angular.enabled=true"
-              "-Dsonar.typescript.file.suffixes=.ts"
-            )
-          fi
-          echo "Running SonarScanner with:"
-          printf '%s\n' "${properties[@]}"
-          
-          sonar-scanner "${properties[@]}"
+          sonar-scanner \
+            -Dsonar.projectKey=$SONAR_PROJECT_KEY \
+            -Dsonar.projectName=$SONAR_PROJECT_NAME \
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.login=$SONAR_TOKEN \
+            -Dsonar.sourceEncoding=UTF-8 \
+            -Dsonar.scm.provider=git \
+            -Dsonar.scm.revision=$GITHUB_SHA \
+            -Dsonar.sources=. \
+            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/** 
           echo "SonarQube analysis completed with status $?"
+
+      - name: Create GitHub Issue on Failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create --title "🚨 SonarQube Analysis Failed: ${{ github.sha }}" \
+            --body "SonarQube analysis failed for commit: **${{ github.sha }}**  
+            🔗 **Branch**: ${{ github.ref }}  
+            📂 **Repository**: ${{ github.repository }}  
+            🛠 **Triggered By**: ${{ github.actor }}  
+            
+            Please check the [GitHub Actions logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for more details." \
+            --label "bug" --repo ${{ github.repository }}
