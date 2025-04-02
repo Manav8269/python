@@ -1,249 +1,65 @@
-name: SonarQube Code Analysis
+      - name: Check SonarQube Quality Gate Status
+        run: |
+          echo "Waiting for SonarQube analysis results..."
+          sleep 10  # Wait for SonarQube to process the results
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+          SONAR_QUALITY_GATE_URL="${{ secrets.SONAR_HOST_URL }}/api/qualitygates/project_status?projectKey=${{ env.SONAR_PROJECT_KEY }}"
+          RESPONSE=$(curl -s -u "${{ secrets.SONAR_TOKEN }}:" "$SONAR_QUALITY_GATE_URL")
+          STATUS=$(echo "$RESPONSE" | jq -r '.projectStatus.status')
 
-env:
-  SONAR_PROJECT_KEY: ${{ github.repository_owner }}_${{ github.event.repository.name }}
-  SONAR_PROJECT_NAME: ${{ github.repository }}
-  WORKSPACE: ${{ github.workspace }}
-  LANG: C.UTF-8
-  LC_ALL: C.UTF-8
-  PYTHONUTF8: 1
-  NODE_VERSION: '18'
-  SONAR_SCANNER_VERSION: "5.0.1.3006"
+          echo "SonarQube Quality Gate Status: $STATUS"
 
-jobs:
-  analyze:
-    name: SonarQube Analysis
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-      checks: write
-      pull-requests: read
+          if [ "$STATUS" == "OK" ]; then
+            echo "✅ Code passed quality gate. Creating an approval issue..."
+            echo "PASSED=true" >> $GITHUB_ENV
+          else
+            echo "❌ Code failed quality gate. Creating an issue for the developer..."
+            echo "PASSED=false" >> $GITHUB_ENV
+          fi
 
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Create GitHub Issue for Failed Quality Gate
+        if: env.PASSED == 'false'
+        uses: peter-evans/create-issue-from-file@v5
         with:
-          fetch-depth: 0
-          persist-credentials: true
+          title: "❌ SonarQube Quality Gate Failed"
+          body: |
+            The latest code analysis failed the SonarQube quality gate.
+            Please review the issues and take corrective action.
+            
+            **Project**: `${{ env.SONAR_PROJECT_NAME }}`
+            **Status**: ❌ Failed
+            **SonarQube URL**: [View Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})
+          labels: bug, sonar-issue
+          assignees: ${{ github.actor }}
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - name: Create GitHub Issue for Quality Gate Pass
+        if: env.PASSED == 'true'
+        uses: peter-evans/create-issue-from-file@v5
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          title: "✅ Code Approved - SonarQube Quality Gate Passed"
+          body: |
+            The latest code analysis **passed** the SonarQube quality gate. The code is now approved.
+            
+            **Project**: `${{ env.SONAR_PROJECT_NAME }}`
+            **Status**: ✅ Passed
+            **SonarQube URL**: [View Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})
+          labels: approved, sonar-passed
+          assignees: ${{ github.actor }}
 
-      - name: Detect Project Type
-        id: detect
-        run: |
-          echo "PYTHON_PROJECT=false" >> $GITHUB_ENV
-          echo "REACT_PROJECT=false" >> $GITHUB_ENV
-          echo "ANGULAR_PROJECT=false" >> $GITHUB_ENV
-
-          if find . -name '*.jsx' -o -name '*.tsx' -o -name '*.test.js' -o -name '*.test.tsx' | grep -q .; then
-            echo "REACT_PROJECT=true" >> $GITHUB_ENV
-            echo "SOURCE_DIR=$(find . -name '*.jsx' -o -name '*.tsx' | head -1 | xargs dirname)" >> $GITHUB_ENV
-          fi
-
-          if [ -f "angular.json" ]; then
-            echo "ANGULAR_PROJECT=true" >> $GITHUB_ENV
-            echo "SOURCE_DIR=src" >> $GITHUB_ENV
-          fi
-
-          if find . -name '*.py' | grep -q .; then
-            echo "PYTHON_PROJECT=true" >> $GITHUB_ENV
-            PY_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3.8")
-            echo "PYTHON_VERSION=$PY_VERSION" >> $GITHUB_ENV
-          fi
-
-      - name: Setup Node.js
-        if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
-        uses: actions/setup-node@v4
+      - name: Send Email Notification (Optional)
+        if: always()
+        uses: dawidd6/action-send-mail@v3
         with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Initialize JavaScript Project
-        if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
-        run: |
-          if [ ! -f "package.json" ]; then
-            npm init -y
+          server_address: smtp.example.com
+          server_port: 587
+          username: "your-email@example.com"
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "SonarQube Quality Gate Report"
+          to: "developer@example.com"
+          body: |
+            SonarQube Analysis Report:
             
-            if [ "$REACT_PROJECT" == "true" ]; then
-              npm install react react-dom @testing-library/react @testing-library/jest-dom jest jest-environment-jsdom jest-junit babel-jest @babel/preset-env @babel/preset-react --save-dev
-              
-              echo '{
-                "presets": [
-                  "@babel/preset-env",
-                  ["@babel/preset-react", { "runtime": "automatic" }]
-                ]
-              }' > babel.config.json
-
-              echo 'import "@testing-library/jest-dom";' > jest.setup.js
-            else
-              npm install jest jest-junit --save-dev
-            fi
-
-            echo '{
-              "collectCoverage": true,
-              "coverageReporters": ["lcov", "text"],
-              "testEnvironment": "jsdom",
-              "setupFilesAfterEnv": ["<rootDir>/jest.setup.js"],
-              "transform": {
-                "^.+\\.[jt]sx?$": "babel-jest"
-              },
-              "moduleNameMapper": {
-                "\\.(css|less|scss|sass)$": "identity-obj-proxy"
-              },
-              "reporters": [
-                "default",
-                ["jest-junit", { 
-                  "outputDirectory": "test-results",
-                  "outputName": "jest-junit.xml",
-                  "suiteName": "jest tests",
-                  "classNameTemplate": "{classname}",
-                  "titleTemplate": "{title}",
-                  "ancestorSeparator": " > ",
-                  "usePathForSuiteName": "true"
-                }]
-              ]
-            }' > jest.config.json
-          fi
-
-          if [ ! -f "package-lock.json" ] && [ ! -f "yarn.lock" ]; then
-            npm install --package-lock-only --no-audit --no-fund --loglevel=error
-          fi
-
-          npm install --no-audit --no-fund --loglevel=error
-
-      - name: Run JavaScript Tests
-        if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
-        run: |
-          mkdir -p test-results coverage
-          
-          npx jest --coverage --passWithNoTests --collectCoverageFrom="**/*.{js,jsx,ts,tsx}" || echo "Tests completed with warnings"
-          
-          if [ ! -f "coverage/lcov.info" ]; then
-            echo "TN:" > coverage/lcov.info
-            find . -name '*.jsx' -o -name '*.tsx' -o -name '*.js' -o -name '*.ts' | while read file; do
-              echo "SF:$file" >> coverage/lcov.info
-              echo "end_of_record" >> coverage/lcov.info
-            done
-          fi
-          
-          if [ ! -f "test-results/jest-junit.xml" ]; then
-            echo '<?xml version="1.0" encoding="UTF-8"?>
-            <testsuites name="jest tests">
-              <testsuite name="jest tests" tests="0" failures="0" errors="0" skipped="0" timestamp="$(date +%Y-%m-%dT%H:%M:%S)" time="0">
-              </testsuite>
-            </testsuites>' > test-results/jest-junit.xml
-          fi
-
-          # Convert jest-junit format to SonarQube expected format
-          if [ -f "test-results/jest-junit.xml" ]; then
-            echo '<?xml version="1.0" encoding="UTF-8"?>
-            <testExecutions version="1">' > test-results/sonar-test.xml
-            
-            # Extract test cases from jest-junit.xml and reformat for SonarQube
-            grep -o '<testcase .*/>' test-results/jest-junit.xml | while read -r testcase; do
-              classname=$(echo "$testcase" | grep -o 'classname="[^"]*"' | cut -d'"' -f2)
-              name=$(echo "$testcase" | grep -o 'name="[^"]*"' | cut -d'"' -f2)
-              time=$(echo "$testcase" | grep -o 'time="[^"]*"' | cut -d'"' -f2)
-              
-              # Get file path from classname (simplified example)
-              filepath=$(echo "$classname" | tr '.' '/').js
-              
-              echo '  <testCase name="'"$name"'" duration="'"$time"'" status="passed" file="'"$filepath"'"/>' >> test-results/sonar-test.xml
-            done
-            
-            echo '</testExecutions>' >> test-results/sonar-test.xml
-          fi
-
-      - name: Install Python Dependencies
-        if: env.PYTHON_PROJECT == 'true'
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f "requirements.txt" ]; then
-            python -m pip install -r requirements.txt
-          fi
-          python -m pip install coverage pytest pytest-cov
-
-      - name: Run Python Tests
-        if: env.PYTHON_PROJECT == 'true'
-        run: |
-          python -m pytest --cov=. --cov-report=xml:coverage.xml --junitxml=junit-results.xml -v || echo "Python tests completed with warnings"
-          [ -f "coverage.xml" ] || { echo "Generating empty coverage.xml"; echo '<coverage/>' > coverage.xml; }
-          [ -f "junit-results.xml" ] || { echo "Generating empty junit-results.xml"; echo '<testsuites/>' > junit-results.xml; }
-
-      - name: Install SonarScanner
-        run: |
-          sudo apt-get update -y && sudo apt-get install -y unzip
-          SCANNER_DIR="$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION"
-          mkdir -p "$HOME/.sonar"
-          curl -sSLo /tmp/sonar-scanner.zip \
-            "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION-linux.zip"
-          unzip -q /tmp/sonar-scanner.zip -d /tmp/
-          mv "/tmp/sonar-scanner-$SONAR_SCANNER_VERSION-linux" "$SCANNER_DIR"
-          rm /tmp/sonar-scanner.zip
-          echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
-          echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
-
-      - name: Run SonarQube Analysis
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        run: |
-          echo "Preparing SonarQube analysis..."
-          properties=(
-            "-Dsonar.projectKey=$SONAR_PROJECT_KEY"
-            "-Dsonar.projectName=$SONAR_PROJECT_NAME"
-            "-Dsonar.host.url=$SONAR_HOST_URL"
-            "-Dsonar.login=$SONAR_TOKEN"
-            "-Dsonar.sourceEncoding=UTF-8"
-            "-Dsonar.scm.provider=git"
-            "-Dsonar.scm.revision=$GITHUB_SHA"
-            "-Dsonar.working.directory=$RUNNER_TEMP/.sonar"
-            "-Dsonar.sources=."
-            "-Dsonar.tests=."
-            "-Dsonar.test.inclusions=**/*.test.*,**/__tests__/**/*.*"
-            "-Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**"
-          )
-
-          if [ "$REACT_PROJECT" == "true" ] || [ "$ANGULAR_PROJECT" == "true" ]; then
-            properties+=(
-              "-Dsonar.javascript.lcov.reportPaths=coverage/lcov.info"
-              "-Dsonar.typescript.lcov.reportPaths=coverage/lcov.info"
-              "-Dsonar.testExecutionReportPaths=test-results/sonar-test.xml"
-            )
-          fi
-
-          if [ "$PYTHON_PROJECT" == "true" ]; then
-            properties+=(
-              "-Dsonar.python.coverage.reportPaths=coverage.xml"
-              "-Dsonar.python.xunit.reportPath=junit-results.xml"
-            )
-          fi
-
-          if [ "$REACT_PROJECT" == "true" ]; then
-            properties+=(
-              "-Dsonar.javascript.react.reactEnabled=true"
-              "-Dsonar.javascript.file.suffixes=.js,.jsx"
-              "-Dsonar.typescript.file.suffixes=.ts,.tsx"
-            )
-          elif [ "$ANGULAR_PROJECT" == "true" ]; then
-            properties+=(
-              "-Dsonar.angular.enabled=true"
-              "-Dsonar.typescript.file.suffixes=.ts"
-            )
-          fi
-
-          echo "Running SonarScanner with:"
-          printf '%s\n' "${properties[@]}"
-          
-          sonar-scanner "${properties[@]}"
-          echo "SonarQube analysis completed with status $?"
+            **Project**: `${{ env.SONAR_PROJECT_NAME }}`
+            **Status**: ${{ env.PASSED == 'true' && '✅ Passed' || '❌ Failed' }}
+            **SonarQube Report**: [View Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})
+          from: "SonarQube CI <your-email@example.com>"
