@@ -1,13 +1,19 @@
-name: SonarQube CI/CD  # Add a name for better readability
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 env:
-  SONAR_PROJECT_KEY: "${{ github.repository_owner }}_${{ github.event.repository.name }}"
-  SONAR_PROJECT_NAME: "${{ github.repository }}"
-  WORKSPACE: "${{ github.workspace }}"
+  SONAR_PROJECT_KEY: ${{ github.repository_owner }}_${{ github.event.repository.name }}
+  SONAR_PROJECT_NAME: ${{ github.repository }}
+  WORKSPACE: ${{ github.workspace }}
   LANG: C.UTF-8
   LC_ALL: C.UTF-8
   PYTHONUTF8: 1
-  NODE_VERSION: "18"
+  NODE_VERSION: '18'
   SONAR_SCANNER_VERSION: "5.0.1.3006"
 
 jobs:
@@ -21,14 +27,8 @@ jobs:
       pull-requests: read
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
+      ...
+      
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -36,21 +36,21 @@ jobs:
         run: |
           echo "Preparing SonarQube analysis..."
           properties=(
-            "-Dsonar.projectKey=${SONAR_PROJECT_KEY}"
-            "-Dsonar.projectName=${SONAR_PROJECT_NAME}"
-            "-Dsonar.host.url=${SONAR_HOST_URL}"
-            "-Dsonar.login=${SONAR_TOKEN}"
+            "-Dsonar.projectKey=$SONAR_PROJECT_KEY"
+            "-Dsonar.projectName=$SONAR_PROJECT_NAME"
+            "-Dsonar.host.url=$SONAR_HOST_URL"
+            "-Dsonar.login=$SONAR_TOKEN"
             "-Dsonar.sourceEncoding=UTF-8"
             "-Dsonar.scm.provider=git"
-            "-Dsonar.scm.revision=${GITHUB_SHA}"
-            "-Dsonar.working.directory=${RUNNER_TEMP}/.sonar"
+            "-Dsonar.scm.revision=$GITHUB_SHA"
+            "-Dsonar.working.directory=$RUNNER_TEMP/.sonar"
             "-Dsonar.sources=."
             "-Dsonar.tests=."
             "-Dsonar.test.inclusions=**/*.test.*,**/__tests__/**/*.*"
             "-Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**"
           )
 
-          if [[ "$REACT_PROJECT" == "true" ]] || [[ "$ANGULAR_PROJECT" == "true" ]]; then
+          if [ "$REACT_PROJECT" == "true" ] || [ "$ANGULAR_PROJECT" == "true" ]; then
             properties+=(  
               "-Dsonar.javascript.lcov.reportPaths=coverage/lcov.info"
               "-Dsonar.typescript.lcov.reportPaths=coverage/lcov.info"
@@ -58,20 +58,20 @@ jobs:
             )
           fi
 
-          if [[ "$PYTHON_PROJECT" == "true" ]]; then
+          if [ "$PYTHON_PROJECT" == "true" ]; then
             properties+=(  
               "-Dsonar.python.coverage.reportPaths=coverage.xml"
               "-Dsonar.python.xunit.reportPath=junit-results.xml"
             )
           fi
 
-          if [[ "$REACT_PROJECT" == "true" ]]; then
+          if [ "$REACT_PROJECT" == "true" ]; then
             properties+=(  
               "-Dsonar.javascript.react.reactEnabled=true"
               "-Dsonar.javascript.file.suffixes=.js,.jsx"
               "-Dsonar.typescript.file.suffixes=.ts,.tsx"
             )
-          elif [[ "$ANGULAR_PROJECT" == "true" ]]; then
+          elif [ "$ANGULAR_PROJECT" == "true" ]; then
             properties+=(  
               "-Dsonar.angular.enabled=true"
               "-Dsonar.typescript.file.suffixes=.ts"
