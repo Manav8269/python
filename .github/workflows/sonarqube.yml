@@ -211,7 +211,7 @@ jobs:
           
           gh pr comment $PR_NUMBER --body "$COMMENT"
 
-      # Create GitHub Issue if Coverage Below 80%
+      # Create GitHub Issue for Low Coverage
       - name: Create GitHub Issue for Low Coverage
         if: env.SONAR_STATUS == 'failure'
         env:
