@@ -6,34 +6,13 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  SONAR_PROJECT_KEY: ${{ github.repository_owner }}_${{ github.event.repository.name }}
-  SONAR_PROJECT_NAME: ${{ github.repository }}
-  SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-  WORKSPACE: ${{ github.workspace }}
-  LANG: C.UTF-8
-  LC_ALL: C.UTF-8
-  PYTHONUTF8: 1
-  NODE_VERSION: '18'
-  SONAR_SCANNER_VERSION: "5.0.1.3006"
-
 jobs:
   analyze:
     name: SonarQube Analysis
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # Required to push changes
-      security-events: write
-      checks: write
-      pull-requests: read
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: true
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -41,42 +20,72 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install SonarScanner
+      - name: Install Dependencies and Run Tests
         run: |
-          sudo apt-get update -y && sudo apt-get install -y unzip
-          SCANNER_DIR="$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION"
-          mkdir -p "$HOME/.sonar"
-          curl -sSLo /tmp/sonar-scanner.zip \
-            "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION-linux.zip"
-          unzip -q /tmp/sonar-scanner.zip -d /tmp/
-          mv "/tmp/sonar-scanner-$SONAR_SCANNER_VERSION-linux" "$SCANNER_DIR"
-          rm /tmp/sonar-scanner.zip
-          echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
-          echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
-
-      - name: Run SonarQube Analysis
-        run: |
-          sonar-scanner \
-            -Dsonar.projectKey=$SONAR_PROJECT_KEY \
-            -Dsonar.projectName=$SONAR_PROJECT_NAME \
-            -Dsonar.host.url=$SONAR_HOST_URL \
-            -Dsonar.login=$SONAR_TOKEN
-
-      - name: Check SonarQube Quality Gate
-        run: |
-          echo "Checking SonarQube Quality Gate..."
-          STATUS=$(curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$SONAR_PROJECT_KEY" | jq -r '.projectStatus.status')
-          echo "Quality Gate Status: $STATUS"
-          if [ "$STATUS" != "OK" ]; then
-            echo "::error::Quality Gate failed. Stopping deployment."
-            exit 1
+          if [ -f package.json ]; then
+            npm ci
+            npm test -- --coverage
+          fi
+          if [ -f requirements.txt ]; then
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            pytest --cov=. --cov-report=xml
           fi
 
-      - name: Push Changes Back to GitHub if Passed
-        if: success()
+      - name: Run SonarQube Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-          git add .
-          git commit -m "Automated commit after SonarQube quality gate passed"
-          git push
+          sonar-scanner \
+            -Dsonar.projectKey=${{ github.repository }} \
+            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+            -Dsonar.sources=. \
+            -Dsonar.python.coverage.reportPaths=coverage.xml
+
+      - name: Check SonarQube Quality Gate Status
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          echo "Checking SonarQube quality gate..."
+          PROJECT_KEY=${{ github.repository }}
+          API_URL="$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$PROJECT_KEY"
+          RESPONSE=$(curl -s -u "$SONAR_TOKEN:" "$API_URL")
+          QUALITY_STATUS=$(echo "$RESPONSE" | jq -r '.projectStatus.status')
+          echo "Quality Gate Status: $QUALITY_STATUS"
+          
+          if [ "$QUALITY_STATUS" != "OK" ]; then
+            echo "SonarQube quality gate failed. Failing workflow."
+            echo "SONAR_STATUS=failure" >> $GITHUB_ENV
+            exit 1
+          else
+            echo "SonarQube quality gate passed!"
+            echo "SONAR_STATUS=success" >> $GITHUB_ENV
+          fi
+
+      - name: Create GitHub Issue for Quality Gate Status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$SONAR_STATUS" == "failure" ]; then
+            gh issue create --title "🚨 SonarQube Quality Gate Failed" \
+              --body "The latest code analysis failed due to insufficient quality. Please review the SonarQube report." \
+              --label "bug,coverage"
+          else
+            gh issue create --title "✅ SonarQube Quality Gate Passed" \
+              --body "Good job! The latest code analysis passed. Keep up the great work! 🎉"
+
+      - name: Notify via Email (if Quality Gate Fails)
+        if: env.SONAR_STATUS == 'failure'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "🚨 SonarQube Quality Gate Failed"
+          body: "Your latest code analysis did not meet the quality standards. Please check the SonarQube report."
+          to: "developer@example.com"
+          from: "GitHub Actions"
