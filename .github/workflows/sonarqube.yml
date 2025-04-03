@@ -52,13 +52,14 @@ jobs:
         with:
           python-version: '3.10'
           
-      # Added step to run tests before SonarQube analysis
+      # Modified step to run tests with improved coverage configuration
       - name: Install Dependencies and Run Tests
         run: |
           # For React/JavaScript tests
           if [ -f package.json ]; then
             npm ci
-            npm test -- --coverage
+            # Configure Jest to collect coverage from all files, not just those with tests
+            npm test -- --coverage --collectCoverageFrom='["src/**/*.{js,jsx,ts,tsx}","!src/**/*.d.ts","!src/reportWebVitals.js","!src/index.js","!src/setupTests.js"]'
           fi
           
           # For Python tests
@@ -66,8 +67,10 @@ jobs:
             python -m pip install --upgrade pip
             pip install -r requirements.txt
             pip install pytest pytest-cov
-            pytest --cov=. --cov-report=xml
+            # Run tests with coverage for all modules, not just those with tests
+            pytest --cov=. --cov-report=xml --cov-report=term --cov-branch
           fi
+
       - name: Install SonarScanner
         run: |
           sudo apt-get update -y && sudo apt-get install -y unzip
@@ -80,6 +83,7 @@ jobs:
           rm /tmp/sonar-scanner.zip
           echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
           echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
+
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -98,7 +102,13 @@ jobs:
             -Dsonar.sources=. \
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
             -Dsonar.python.coverage.reportPaths=coverage.xml \
-            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**,**/__pycache__/**,**/*.test.js,**/*_test.py,**/test_*.py
+            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**,**/__pycache__/**,**/*.test.js,**/*_test.py,**/test_*.py \
+            -Dsonar.coverage.exclusions=**/*.config.js,**/setup*.js,**/vite.config.*,**/.eslintrc.*,**/jest.config.*,**/tests/**,**/test/**,**/__tests__/**,**/__mocks__/**,**/public/**,**/*.d.ts \
+            -Dsonar.tests=**/*.test.js,**/*.spec.js,**/*_test.py,**/test_*.py \
+            -Dsonar.testExecutionReportPaths=test-report.xml \
+            -Dsonar.javascript.coverage.reportPaths=coverage/coverage-summary.json \
+            -Dsonar.verbose=true
+
       - name: Check SonarQube Quality Gate Status
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -123,6 +133,41 @@ jobs:
           else
             echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
           fi
+
+      - name: Generate Coverage Report for Uncovered Files
+        run: |
+          # For JavaScript projects
+          if [ -f package.json ]; then
+            echo "### JavaScript Files with Low Coverage:" > coverage-report.txt
+            if [ -f coverage/lcov.info ]; then
+              grep -B 1 "LF:.*LH:0" coverage/lcov.info | grep "SF:" | sed 's/SF:/  - /' >> coverage-report.txt
+            else
+              echo "  No JavaScript coverage data found" >> coverage-report.txt
+            fi
+          fi
+          
+          # For Python projects
+          if [ -f coverage.xml ]; then
+            echo "### Python Files with Low Coverage:" >> coverage-report.txt
+            python -c "
+            import xml.etree.ElementTree as ET
+            tree = ET.parse('coverage.xml')
+            root = tree.getroot()
+            low_coverage = []
+            for pkg in root.findall('.//package'):
+                for cls in pkg.findall('.//class'):
+                    filename = cls.get('filename')
+                    line_rate = float(cls.get('line-rate', 0))
+                    if line_rate < 0.5:  # Less than 50% coverage
+                        low_coverage.append((filename, line_rate * 100))
+            for filename, rate in sorted(low_coverage, key=lambda x: x[1]):
+                print(f'  - {filename} ({rate:.1f}%)')
+            " >> coverage-report.txt || echo "  Error parsing Python coverage data" >> coverage-report.txt
+          fi
+          
+          cat coverage-report.txt
+          echo "UNCOVERED_FILES_REPORT=$(cat coverage-report.txt)" >> $GITHUB_ENV
+
       - name: Determine Pass/Fail Criteria
         run: |
           COVERAGE=${{ env.COVERAGE }}
@@ -133,6 +178,7 @@ jobs:
             echo "SONAR_STATUS=failure" >> $GITHUB_ENV
             echo "STATUS_EMOJI=❌" >> $GITHUB_ENV
           fi
+
       # Add detailed PR comment with coverage info
       - name: Add PR Comment
         if: github.event_name == 'pull_request'
@@ -144,12 +190,12 @@ jobs:
           
           ${{ env.COVERAGE_DETAILS }}
           
-          - Files with low coverage:
-          $(sonar-scanner -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} -Dsonar.login=${{ secrets.SONAR_TOKEN }} -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.projectName=$SONAR_PROJECT_NAME -Dsonar.scm.disabled=true -Dsonar.scanner.dumpToFile=sonarqube-report.txt -Dsonar.analysis.mode=preview || true && cat sonarqube-report.txt | grep -A 10 "coverage.*0%" || echo "  None found")
+          ${{ env.UNCOVERED_FILES_REPORT }}
           
           [View full report in SonarQube](${{ secrets.SONAR_HOST_URL }}/dashboard?id=$SONAR_PROJECT_KEY)"
           
           gh pr comment $PR_NUMBER --body "$COMMENT"
+
       # Create labels if they don't exist
       - name: Create Required Labels
         if: env.SONAR_STATUS == 'failure'
@@ -161,6 +207,7 @@ jobs:
           
           # Create the coverage label if it doesn't exist
           gh label create "coverage" --color "#fbca04" --description "Test coverage needs improvement" --force || true
+
       - name: Create GitHub Issue if Coverage Below 80%
         if: env.SONAR_STATUS == 'failure'
         env:
@@ -173,6 +220,9 @@ jobs:
           📂 **Repository**: ${{ github.repository }}  
           🛠 **Triggered By**: ${{ github.actor }}  
           📊 **Code Coverage**: ${{ env.COVERAGE }}% (must be **≥80%**)  
+          
+          ### Files needing test coverage:
+          ${{ env.UNCOVERED_FILES_REPORT }}
           
           ### Recommended actions:
           1. Add tests for untested functions
