@@ -84,6 +84,43 @@ jobs:
           echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
           echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
 
+      # Find test directories for SonarQube
+      - name: Find Test Directories
+        id: find_test_dirs
+        run: |
+          # Find test directories (without wildcards)
+          TEST_DIRS=""
+          
+          # Check for typical test directories in JavaScript/TypeScript projects
+          for dir in src/test src/__tests__ tests test; do
+            if [ -d "$dir" ]; then
+              if [ -z "$TEST_DIRS" ]; then
+                TEST_DIRS="$dir"
+              else
+                TEST_DIRS="$TEST_DIRS,$dir"
+              fi
+            fi
+          done
+          
+          # Check for typical test directories in Python projects
+          for dir in tests test; do
+            if [ -d "$dir" ]; then
+              if [ -z "$TEST_DIRS" ]; then
+                TEST_DIRS="$dir"
+              else
+                TEST_DIRS="$TEST_DIRS,$dir"
+              fi
+            fi
+          done
+          
+          # If no test directories found, use a safe default
+          if [ -z "$TEST_DIRS" ]; then
+            TEST_DIRS="."
+          fi
+          
+          echo "TEST_DIRS=$TEST_DIRS" >> $GITHUB_ENV
+          echo "Found test directories: $TEST_DIRS"
+
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -100,13 +137,14 @@ jobs:
             -Dsonar.scm.provider=git \
             -Dsonar.scm.revision=$GITHUB_SHA \
             -Dsonar.sources=. \
+            -Dsonar.tests=${{ env.TEST_DIRS }} \
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
             -Dsonar.python.coverage.reportPaths=coverage.xml \
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**,**/__pycache__/**,**/*.test.js,**/*_test.py,**/test_*.py \
             -Dsonar.coverage.exclusions=**/*.config.js,**/setup*.js,**/vite.config.*,**/.eslintrc.*,**/jest.config.*,**/tests/**,**/test/**,**/__tests__/**,**/__mocks__/**,**/public/**,**/*.d.ts \
-            -Dsonar.tests=**/*.test.js,**/*.spec.js,**/*_test.py,**/test_*.py \
             -Dsonar.testExecutionReportPaths=test-report.xml \
             -Dsonar.javascript.coverage.reportPaths=coverage/coverage-summary.json \
+            -Dsonar.test.inclusions=**/*.test.js,**/*.spec.js,**/*_test.py,**/test_*.py \
             -Dsonar.verbose=true
 
       - name: Check SonarQube Quality Gate Status
