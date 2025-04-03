@@ -10,6 +10,10 @@ env:
   SONAR_PROJECT_KEY: ${{ github.repository_owner }}_${{ github.event.repository.name }}
   SONAR_PROJECT_NAME: ${{ github.repository }}
   WORKSPACE: ${{ github.workspace }}
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  PYTHONUTF8: 1
+  NODE_VERSION: '18'
   SONAR_SCANNER_VERSION: "5.0.1.3006"
 
 jobs:
@@ -20,8 +24,8 @@ jobs:
       contents: read
       security-events: write
       checks: write
-      pull-requests: write
-      issues: write
+      pull-requests: read
+      issues: write  # Required for creating GitHub issues
 
     steps:
       - name: Checkout Code
@@ -36,32 +40,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          
-      - name: Install Dependencies and Run Tests
-        run: |
-          # For JavaScript/React tests
-          if [ -f package.json ]; then
-            npm ci
-            npm test -- --coverage || echo "JS tests failed but continuing"
-          fi
-          
-          # For Python tests
-          if [ -f requirements.txt ]; then
-            python -m pip install --upgrade pip
-            pip install -r requirements.txt
-            pip install pytest pytest-cov
-            pytest --cov=. --cov-report=xml || echo "Python tests failed but continuing"
-          fi
-
       - name: Install SonarScanner
         run: |
           sudo apt-get update -y && sudo apt-get install -y unzip
@@ -74,171 +52,63 @@ jobs:
           rm /tmp/sonar-scanner.zip
           echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
           echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
-
-      - name: Create SonarQube Properties File
-        run: |
-          cat > sonar-project.properties << EOF
-          sonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
-          sonar.projectName=${{ env.SONAR_PROJECT_NAME }}
-          sonar.sourceEncoding=UTF-8
-          sonar.scm.provider=git
-          sonar.sources=.
-          
-          # Exclude non-source files
-          sonar.exclusions=**/node_modules/**,**/dist/**,**/build/**,**/coverage/**,**/__pycache__/**,**/*.pyc,**/*.min.js,**/vendor/**,**/.venv/**
-          
-          # Coverage configurations
-          sonar.coverage.exclusions=**/*.test.js,**/*.spec.js,**/*_test.py,**/test_*.py,**/*.config.js,**/setup*.js,**/tests/**,**/test/**
-          
-          # JavaScript/TypeScript configurations
-          sonar.javascript.lcov.reportPaths=coverage/lcov.info
-          
-          # Python configurations
-          sonar.python.coverage.reportPaths=coverage.xml
-          EOF
-
       - name: Run SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Running SonarQube analysis..."
           sonar-scanner \
-            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
-            -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
-            -Dsonar.verbose=true
-
-      - name: Check Coverage Results
-        run: |
-          # Check if coverage reports exist
-          if [ -f coverage/lcov.info ] || [ -f coverage.xml ]; then
-            echo "Coverage reports found. Checking coverage percentage..."
-            
-            # Default value in case we can't extract coverage
-            COVERAGE_PERCENT=0
-            
-            # Try to extract JavaScript coverage
-            if [ -f coverage/lcov.info ]; then
-              JS_LINES_TOTAL=$(grep -o "LF:.*" coverage/lcov.info | awk -F: '{sum+=$2} END {print sum}')
-              JS_LINES_COVERED=$(grep -o "LH:.*" coverage/lcov.info | awk -F: '{sum+=$2} END {print sum}')
-              
-              if [ "$JS_LINES_TOTAL" != "0" ] && [ ! -z "$JS_LINES_TOTAL" ] && [ ! -z "$JS_LINES_COVERED" ]; then
-                JS_COVERAGE=$(echo "scale=2; 100 * $JS_LINES_COVERED / $JS_LINES_TOTAL" | bc)
-                echo "JavaScript coverage: $JS_COVERAGE%"
-                COVERAGE_PERCENT=$JS_COVERAGE
-              fi
-            fi
-            
-            # Try to extract Python coverage
-            if [ -f coverage.xml ]; then
-              PY_COVERAGE=$(grep -o 'line-rate="[0-9]*\.[0-9]*"' coverage.xml | head -1 | cut -d'"' -f2)
-              
-              if [ ! -z "$PY_COVERAGE" ]; then
-                PY_COVERAGE=$(echo "scale=2; 100 * $PY_COVERAGE" | bc)
-                echo "Python coverage: $PY_COVERAGE%"
-                # Use Python coverage if JavaScript coverage wasn't found
-                if [ "$COVERAGE_PERCENT" = "0" ]; then
-                  COVERAGE_PERCENT=$PY_COVERAGE
-                fi
-              fi
-            fi
-            
-            echo "Overall coverage: $COVERAGE_PERCENT%"
-            echo "COVERAGE=$COVERAGE_PERCENT" >> $GITHUB_ENV
-            
-            # Generate a list of files with low coverage
-            echo "### Files with Low Coverage:" > coverage-report.txt
-            
-            if [ -f coverage/lcov.info ]; then
-              echo "#### JavaScript Files:" >> coverage-report.txt
-              grep -B 1 "LF:.*LH:0" coverage/lcov.info | grep "SF:" | sed 's/SF:/  - /' >> coverage-report.txt || echo "  No JavaScript files with zero coverage found" >> coverage-report.txt
-            fi
-            
-            if [ -f coverage.xml ]; then
-              echo "#### Python Files:" >> coverage-report.txt
-              python -c "
-              import xml.etree.ElementTree as ET
-              tree = ET.parse('coverage.xml')
-              root = tree.getroot()
-              low_coverage = []
-              for pkg in root.findall('.//package'):
-                  for cls in pkg.findall('.//class'):
-                      filename = cls.get('filename')
-                      line_rate = float(cls.get('line-rate', 0))
-                      if line_rate < 0.5:  # Less than 50% coverage
-                          low_coverage.append((filename, line_rate * 100))
-              for filename, rate in sorted(low_coverage, key=lambda x: x[1]):
-                  print(f'  - {filename} ({rate:.1f}%)')
-              " >> coverage-report.txt || echo "  No Python files with low coverage found or error parsing coverage data" >> coverage-report.txt
-            fi
-            
-            cat coverage-report.txt
-            echo "UNCOVERED_FILES_REPORT<<EOF" >> $GITHUB_ENV
-            cat coverage-report.txt >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
-            
-            # Determine if coverage is sufficient
-            if (( $(echo "$COVERAGE_PERCENT >= 80" | bc -l) )); then
-              echo "SONAR_STATUS=success" >> $GITHUB_ENV
-              echo "STATUS_EMOJI=✅" >> $GITHUB_ENV
-            else
-              echo "SONAR_STATUS=failure" >> $GITHUB_ENV
-              echo "STATUS_EMOJI=❌" >> $GITHUB_ENV
-            fi
-          else
-            echo "No coverage reports found"
-            echo "COVERAGE=0" >> $GITHUB_ENV
-            echo "SONAR_STATUS=failure" >> $GITHUB_ENV
-            echo "STATUS_EMOJI=❌" >> $GITHUB_ENV
-            echo "UNCOVERED_FILES_REPORT=No coverage reports were generated" >> $GITHUB_ENV
-          fi
-      
-      # Add PR comment with coverage info
-      - name: Add PR Comment
-        if: github.event_name == 'pull_request'
+            -Dsonar.projectKey=$SONAR_PROJECT_KEY \
+            -Dsonar.projectName=$SONAR_PROJECT_NAME \
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.login=$SONAR_TOKEN \
+            -Dsonar.sourceEncoding=UTF-8 \
+            -Dsonar.scm.provider=git \
+            -Dsonar.scm.revision=$GITHUB_SHA \
+            -Dsonar.sources=. \
+            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/** 
+      - name: Check SonarQube Quality Gate Status
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          PR_NUMBER=$(echo $GITHUB_REF | awk 'BEGIN { FS = "/" } ; { print $3 }')
-          COMMENT="## Code Coverage Analysis ${{ env.STATUS_EMOJI }}
-          
-          Current coverage: ${{ env.COVERAGE }}% (Target: 80%)
-          
-          ${{ env.UNCOVERED_FILES_REPORT }}
-          
-          [View SonarQube Analysis](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})"
-          
-          gh pr comment $PR_NUMBER --body "$COMMENT"
-
-      # Create GitHub Issue for Low Coverage
-      - name: Create GitHub Issue for Low Coverage
+          echo "Fetching SonarQube quality gate results..."
+          PROJECT_KEY="${{ github.repository_owner }}_${{ github.event.repository.name }}"
+          API_URL="$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$PROJECT_KEY"
+          RESPONSE=$(curl -s -u "$SONAR_TOKEN:" "$API_URL")
+          echo "SonarQube API Response: $RESPONSE"
+          QUALITY_STATUS=$(echo "$RESPONSE" | jq -r '.projectStatus.status')
+          COVERAGE=$(echo "$RESPONSE" | jq -r '.projectStatus.conditions[] | select(.metricKey=="coverage") | .value')
+          echo "Quality Gate Status: $QUALITY_STATUS"
+          echo "Coverage: $COVERAGE%"
+          if [ -z "$COVERAGE" ] || [ "$COVERAGE" == "null" ]; then
+            echo "COVERAGE=0" >> $GITHUB_ENV
+          else
+            echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
+          fi
+      - name: Determine Pass/Fail Criteria
+        run: |
+          COVERAGE=${{ env.COVERAGE }}
+          if (( $(echo "$COVERAGE >= 80" | bc -l) )); then
+            echo "SONAR_STATUS=success" >> $GITHUB_ENV
+          else
+            echo "SONAR_STATUS=failure" >> $GITHUB_ENV
+          fi
+      - name: Create GitHub Issue if Coverage Below 80%
         if: env.SONAR_STATUS == 'failure'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Create required labels
-          gh label create "bug" --color "#d73a4a" --description "Something isn't working" --force || true
-          gh label create "coverage" --color "#fbca04" --description "Test coverage needs improvement" --force || true
-          
-          TITLE="🚨 Code Coverage Below 80%: ${{ github.sha }}"
-          BODY="Code coverage analysis failed due to insufficient code coverage. ❌  
+          TITLE="🚨 SonarQube Coverage Below 80%: ${{ github.sha }}"
+          LABEL="bug"
+          BODY="SonarQube analysis failed due to insufficient code coverage. ❌  
           🔗 **Branch**: ${{ github.ref }}  
           📂 **Repository**: ${{ github.repository }}  
           🛠 **Triggered By**: ${{ github.actor }}  
           📊 **Code Coverage**: ${{ env.COVERAGE }}% (must be **≥80%**)  
-          
-          ### Files needing test coverage:
-          ${{ env.UNCOVERED_FILES_REPORT }}
-          
-          ### Recommended actions:
-          1. Add tests for untested functions
-          2. Focus on testing key business logic
-          3. Use code coverage tools locally before pushing
-          
           Check the [GitHub Actions logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
-          
           gh issue create --title "$TITLE" \
                           --body "$BODY" \
-                          --label "bug,coverage" \
+                          --label "$LABEL" \
                           --repo ${{ github.repository }}
