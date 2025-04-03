@@ -23,6 +23,7 @@ jobs:
           unzip $HOME/.sonar/sonar-scanner.zip -d $HOME/.sonar/
           echo "$HOME/.sonar/sonar-scanner-5.0.1.3006/bin" >> $GITHUB_PATH
           echo "SONAR_SCANNER_HOME=$HOME/.sonar/sonar-scanner-5.0.1.3006" >> $GITHUB_ENV
+          export PATH="$HOME/.sonar/sonar-scanner-5.0.1.3006/bin:$PATH"
 
       - name: Debug SonarScanner Installation
         run: |
