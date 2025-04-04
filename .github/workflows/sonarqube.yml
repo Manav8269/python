@@ -15,6 +15,7 @@ env:
   PYTHONUTF8: 1
   NODE_VERSION: '18'
   SONAR_SCANNER_VERSION: "5.0.1.3006"
+  MIN_COVERAGE_THRESHOLD: 80
 
 jobs:
   analyze:
@@ -25,6 +26,7 @@ jobs:
       security-events: write
       checks: write
       pull-requests: read
+      issues: write  # Added permission for creating issues
 
     steps:
       - name: Checkout Code
@@ -58,6 +60,7 @@ jobs:
             PY_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3.8")
             echo "PYTHON_VERSION=$PY_VERSION" >> $GITHUB_ENV
           fi
+
       - name: Setup Node.js
         if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
         uses: actions/setup-node@v4
@@ -112,6 +115,7 @@ jobs:
             npm install --package-lock-only --no-audit --no-fund --loglevel=error
           fi
           npm install --no-audit --no-fund --loglevel=error
+
       - name: Run JavaScript Tests
         if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
         run: |
@@ -153,6 +157,7 @@ jobs:
             
             echo '</testExecutions>' >> test-results/sonar-test.xml
           fi
+
       - name: Install Python Dependencies
         if: env.PYTHON_PROJECT == 'true'
         run: |
@@ -161,12 +166,14 @@ jobs:
             python -m pip install -r requirements.txt
           fi
           python -m pip install coverage pytest pytest-cov
+
       - name: Run Python Tests
         if: env.PYTHON_PROJECT == 'true'
         run: |
           python -m pytest --cov=. --cov-report=xml:coverage.xml --junitxml=junit-results.xml -v || echo "Python tests completed with warnings"
           [ -f "coverage.xml" ] || { echo "Generating empty coverage.xml"; echo '<coverage/>' > coverage.xml; }
           [ -f "junit-results.xml" ] || { echo "Generating empty junit-results.xml"; echo '<testsuites/>' > junit-results.xml; }
+
       - name: Install SonarScanner
         run: |
           sudo apt-get update -y && sudo apt-get install -y unzip
@@ -179,7 +186,9 @@ jobs:
           rm /tmp/sonar-scanner.zip
           echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
           echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
+
       - name: Run SonarQube Analysis
+        id: sonarqube
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
@@ -227,5 +236,150 @@ jobs:
           echo "Running SonarScanner with:"
           printf '%s\n' "${properties[@]}"
           
+          # Run the scanner and save the exit code
           sonar-scanner "${properties[@]}"
-          echo "SonarQube analysis completed with status $?"
+          SONAR_EXIT_CODE=$?
+          
+          # Report result
+          echo "SonarQube analysis completed with status $SONAR_EXIT_CODE"
+          
+          # Output to workflow steps
+          echo "sonar_exit_code=$SONAR_EXIT_CODE" >> $GITHUB_OUTPUT
+          
+          # If successful, extract the coverage percentage from the report
+          if [ $SONAR_EXIT_CODE -eq 0 ]; then
+            if [ "$REACT_PROJECT" == "true" ] || [ "$ANGULAR_PROJECT" == "true" ]; then
+              # Extract coverage percentage from lcov info file
+              if [ -f "coverage/lcov.info" ]; then
+                # Count total lines and covered lines
+                TOTAL_LINES=$(grep -c "LF:" coverage/lcov.info || echo 0)
+                COVERED_LINES=$(grep -c "LH:" coverage/lcov.info || echo 0)
+                
+                if [ $TOTAL_LINES -gt 0 ]; then
+                  COVERAGE_PERCENT=$(awk "BEGIN {print (($COVERED_LINES/$TOTAL_LINES) * 100)}")
+                  echo "coverage_percent=$COVERAGE_PERCENT" >> $GITHUB_OUTPUT
+                  echo "Calculated coverage percentage: $COVERAGE_PERCENT%"
+                else
+                  echo "coverage_percent=0" >> $GITHUB_OUTPUT
+                  echo "No coverage information found"
+                fi
+              else
+                echo "coverage_percent=0" >> $GITHUB_OUTPUT
+                echo "No coverage file found"
+              fi
+            elif [ "$PYTHON_PROJECT" == "true" ]; then
+              # Extract coverage from Python coverage.xml
+              if [ -f "coverage.xml" ]; then
+                COVERAGE_PERCENT=$(grep -o 'line-rate="[0-9.]*"' coverage.xml | head -1 | cut -d'"' -f2)
+                if [ -n "$COVERAGE_PERCENT" ]; then
+                  # Convert from decimal to percentage
+                  COVERAGE_PERCENT=$(awk "BEGIN {print ($COVERAGE_PERCENT * 100)}")
+                  echo "coverage_percent=$COVERAGE_PERCENT" >> $GITHUB_OUTPUT
+                  echo "Calculated coverage percentage: $COVERAGE_PERCENT%"
+                else
+                  echo "coverage_percent=0" >> $GITHUB_OUTPUT
+                  echo "No coverage percentage found in the XML"
+                fi
+              else
+                echo "coverage_percent=0" >> $GITHUB_OUTPUT
+                echo "No coverage file found"
+              fi
+            else
+              echo "coverage_percent=0" >> $GITHUB_OUTPUT
+              echo "Unable to determine project type for coverage calculation"
+            fi
+          else
+            echo "coverage_percent=0" >> $GITHUB_OUTPUT
+            echo "SonarQube analysis failed, skipping coverage calculation"
+          fi
+
+      - name: Create Success Issue
+        if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const coverage = parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}').toFixed(2);
+            const repo = context.repo;
+            const repoName = '${{ github.repository }}';
+            const sha = context.sha.substring(0, 7);
+            const branchName = '${{ github.ref_name }}';
+            const sonarUrl = '${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }}';
+            
+            await github.rest.issues.create({
+              owner: repo.owner,
+              repo: repo.repo,
+              title: `✅ SonarQube Analysis Success - Coverage: ${coverage}%`,
+              body: `## SonarQube Analysis Success Notification
+              
+              **Repository:** ${repoName}
+              **Branch:** ${branchName}
+              **Commit:** ${sha}
+              **Coverage:** ${coverage}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)
+              
+              Congratulations! Your code has passed the SonarQube analysis with excellent code coverage.
+              
+              ### Details
+              - The code coverage exceeds the minimum threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%
+              - Analysis was completed successfully
+              
+              ### Links
+              - [View Full Report](${sonarUrl})
+              - [View Commit](https://github.com/${repoName}/commit/${context.sha})
+              
+              Great work! Keep up the good testing practices.`,
+              labels: ['quality-gate-success', 'high-coverage']
+            });
+            console.log('Created success issue for SonarQube analysis');
+
+      - name: Create Failure Issue
+        if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const coverage = parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}' || '0').toFixed(2);
+            const exitCode = '${{ steps.sonarqube.outputs.sonar_exit_code }}';
+            const repo = context.repo;
+            const repoName = '${{ github.repository }}';
+            const sha = context.sha.substring(0, 7);
+            const branchName = '${{ github.ref_name }}';
+            const sonarUrl = '${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }}';
+            
+            let failureReason = '';
+            if (exitCode !== '0') {
+              failureReason = 'SonarQube analysis execution failed';
+            } else {
+              failureReason = `Code coverage (${coverage}%) is below the minimum threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%`;
+            }
+            
+            await github.rest.issues.create({
+              owner: repo.owner,
+              repo: repo.repo,
+              title: `❌ SonarQube Analysis Failed - Coverage: ${coverage}%`,
+              body: `## SonarQube Analysis Failure Notification
+              
+              **Repository:** ${repoName}
+              **Branch:** ${branchName}
+              **Commit:** ${sha}
+              **Coverage:** ${coverage}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)
+              **Exit Code:** ${exitCode}
+              
+              ### Failure Reason
+              ${failureReason}
+              
+              ### Recommended Actions
+              ${exitCode !== '0' ? 
+                '- Check the workflow logs for specific error details\n- Verify SonarQube connection settings\n- Ensure required secrets are properly configured' : 
+                '- Add more unit tests to increase code coverage\n- Review untested code areas\n- Consider implementing test-driven development practices'
+              }
+              
+              ### Links
+              - [View Workflow Run](https://github.com/${repoName}/actions/runs/${{ github.run_id }})
+              - [View Commit](https://github.com/${repoName}/commit/${context.sha})
+              ${exitCode === '0' ? `- [View Full Report](${sonarUrl})` : ''}
+              
+              Please address these issues before merging this code.`,
+              labels: ['quality-gate-failure', 'needs-attention']
+            });
+            console.log('Created failure issue for SonarQube analysis');
