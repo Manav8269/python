@@ -222,6 +222,7 @@ jobs:
           fi
           echo "Calculated coverage percentage: $COVERAGE_PERCENT%"
           echo "coverage_percent=$COVERAGE_PERCENT" >> $GITHUB_OUTPUT
+          echo "Minimum coverage threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%" #Add this line for debug.
 
       - name: Create Success Issue
         if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
