@@ -60,7 +60,6 @@ jobs:
             PY_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3.8")
             echo "PYTHON_VERSION=$PY_VERSION" >> $GITHUB_ENV
           fi
-
       - name: Setup Node.js
         if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
         uses: actions/setup-node@v4
@@ -115,7 +114,6 @@ jobs:
             npm install --package-lock-only --no-audit --no-fund --loglevel=error
           fi
           npm install --no-audit --no-fund --loglevel=error
-
       - name: Run JavaScript Tests
         if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
         run: |
@@ -157,7 +155,6 @@ jobs:
             
             echo '</testExecutions>' >> test-results/sonar-test.xml
           fi
-
       - name: Install Python Dependencies
         if: env.PYTHON_PROJECT == 'true'
         run: |
@@ -166,20 +163,17 @@ jobs:
             python -m pip install -r requirements.txt
           fi
           python -m pip install coverage pytest pytest-cov
-
       - name: Run Python Tests
         if: env.PYTHON_PROJECT == 'true'
         run: |
           python -m pytest --cov=. --cov-report=xml:coverage.xml --junitxml=junit-results.xml -v || echo "Python tests completed with warnings"
           [ -f "coverage.xml" ] || { echo "Generating empty coverage.xml"; echo '<coverage/>' > coverage.xml; }
           [ -f "junit-results.xml" ] || { echo "Generating empty junit-results.xml"; echo '<testsuites/>' > junit-results.xml; }
-
       # Clear SonarQube cache before installing scanner to avoid any corrupted cache issues
       - name: Clear SonarQube Cache
         run: |
           rm -rf $HOME/.sonar/cache || true
           echo "SonarQube cache cleared"
-
       - name: Install SonarScanner
         run: |
           sudo apt-get update -y && sudo apt-get install -y unzip
@@ -230,7 +224,6 @@ jobs:
             echo "SonarScanner installation failed"
             exit 1
           fi
-
       - name: Optimize SonarQube Analysis Configuration
         id: sonar_config
         run: |
@@ -276,7 +269,6 @@ jobs:
           # Display final configuration
           echo "SonarQube configuration prepared:"
           cat sonar-project.properties
-
       - name: Run SonarQube Analysis
         id: sonarqube
         env:
@@ -289,10 +281,8 @@ jobs:
           export SONAR_SCANNER_OPTS="-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv6Addresses=false -Dsonar.forceAuthentication=true -Dsonar.network.timeout=300000 -Dsonar.download.timeout=300000"
           
           # Run with debug logs to better diagnose issues
-          $SONAR_SCANNER_HOME/bin/sonar-scanner -X
-          SONAR_EXIT_CODE=$?
-          
-          if [ $SONAR_EXIT_CODE -ne 0 ]; then
+          $SONAR_SCANNER_HOME/bin/sonar-scanner -X || {
+            SONAR_EXIT_CODE=$?
             echo "SonarQube analysis failed with exit code $SONAR_EXIT_CODE"
             
             # Try running with different JVM settings for reliable plugin download
@@ -305,9 +295,8 @@ jobs:
             
             $SONAR_SCANNER_HOME/bin/sonar-scanner -Dsonar.working.directory=$RUNNER_TEMP/.sonar
             SONAR_EXIT_CODE=$?
-          fi
+          }
           
-          # Explicitly set the exit code output
           echo "sonar_exit_code=$SONAR_EXIT_CODE" >> $GITHUB_OUTPUT
           
           # Extract coverage percentage
@@ -318,8 +307,8 @@ jobs:
             COVERAGE_PERCENT=$(echo "$COVERAGE_VALUE * 100" | bc -l || echo "0")
             COVERAGE_PERCENT=$(printf "%.2f" $COVERAGE_PERCENT)
           elif [ -f "coverage/lcov.info" ]; then
-            TOTAL_LINES=$(grep "LF:" coverage/lcov.info | awk '{sum+=$2} END {print sum}' || echo 0)
-            COVERED_LINES=$(grep "LH:" coverage/lcov.info | awk '{sum+=$2} END {print sum}' || echo 0)
+            TOTAL_LINES=$(grep -c "LF:" coverage/lcov.info || echo 0)
+            COVERED_LINES=$(grep -c "LH:" coverage/lcov.info || echo 0)
             
             if [ $TOTAL_LINES -gt 0 ]; then
               COVERAGE_PERCENT=$(echo "scale=2; ($COVERED_LINES/$TOTAL_LINES) * 100" | bc -l || echo "0")
@@ -329,18 +318,6 @@ jobs:
           
           echo "Calculated coverage percentage: $COVERAGE_PERCENT%"
           echo "coverage_percent=$COVERAGE_PERCENT" >> $GITHUB_OUTPUT
-          
-          # Debug output to verify values
-          echo "Debug - Exit Code: $SONAR_EXIT_CODE, Coverage: $COVERAGE_PERCENT%"
-      
-      # Add a debug step to verify the values
-      - name: Debug Outputs
-        run: |
-          echo "SonarQube Exit Code: ${{ steps.sonarqube.outputs.sonar_exit_code }}"
-          echo "Coverage Percentage: ${{ steps.sonarqube.outputs.coverage_percent }}%"
-          echo "Min Coverage Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%"
-          echo "Is below threshold: ${{ steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD }}"
-
       - name: Create Success Issue
         if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
         uses: actions/github-script@v7
@@ -379,12 +356,8 @@ jobs:
               labels: ['quality-gate-success', 'high-coverage']
             });
             console.log('Created success issue for SonarQube analysis');
-
-      - name: Create Failure Issue
-        if: |
-          steps.sonarqube.outputs.sonar_exit_code != '0' || 
-          (steps.sonarqube.outputs.sonar_exit_code == '0' && 
-           steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD)
+      - name: Create PASSED Issue
+        if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
