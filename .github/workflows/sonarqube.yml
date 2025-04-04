@@ -282,6 +282,16 @@ jobs:
           
           echo "COVERAGE_PERCENT=$COVERAGE_PERCENT" >> $GITHUB_ENV
           echo "Coverage percentage: $COVERAGE_PERCENT%"
+          
+          # Check if coverage meets threshold and create status file
+          THRESHOLD=$COVERAGE_THRESHOLD
+          if (( $(echo "$COVERAGE_PERCENT < $THRESHOLD" | bc -l) )); then
+            echo "COVERAGE_STATUS=FAILED" >> $GITHUB_ENV
+            echo "Coverage $COVERAGE_PERCENT% is below threshold $THRESHOLD%"
+          else
+            echo "COVERAGE_STATUS=PASSED" >> $GITHUB_ENV
+            echo "Coverage $COVERAGE_PERCENT% meets or exceeds threshold $THRESHOLD%"
+          fi
 
       - name: Create GitHub Issue for Results
         uses: actions/github-script@v7
@@ -317,8 +327,9 @@ jobs:
             
             const issue = await github.rest.issues.create(issueData);
             console.log(`Created issue #${issue.data.number}: ${title}`);
-            
-            // If coverage is below threshold, fail the workflow
-            if (!passed) {
-              core.setFailed(`Code coverage is ${coveragePercent}%, which is below the threshold of ${threshold}%`);
-            }
+
+      - name: Check Coverage Status and Fail if Needed
+        if: env.COVERAGE_STATUS == 'FAILED'
+        run: |
+          echo "::error::Code coverage is ${COVERAGE_PERCENT}%, which is below the threshold of ${COVERAGE_THRESHOLD}%"
+          exit 1
