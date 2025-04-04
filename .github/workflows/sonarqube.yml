@@ -258,16 +258,24 @@ jobs:
             const branchName = '${{ github.ref_name }}';
             const sonarUrl = '${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }}';
             let failureReason = '';
+            let issueTitle = '';
+            let issueLabels = [];
+
             if (exitCode !== '0') {
-              failureReason = 'SonarQube analysis execution failed';
-            } else {
-              failureReason = `Code coverage (${coverage}%) is below the minimum threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%`;
+              failureReason = 'SonarQube analysis execution failed.';
+              issueTitle = `❌ SonarQube Analysis Failed - Exit Code: ${exitCode}`;
+              issueLabels = ['quality-gate-failure', 'needs-attention', 'sonarqube-failure'];
+            } else if (coverage < ${{ env.MIN_COVERAGE_THRESHOLD }}) {
+              failureReason = `Code coverage (${coverage}%) is below the minimum threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%.`;
+              issueTitle = `⚠️ SonarQube Analysis - Coverage Below Threshold: ${coverage}%`;
+              issueLabels = ['quality-gate-failure', 'needs-attention', 'coverage-issue'];
             }
+
             await github.rest.issues.create({
               owner: repo.owner,
               repo: repo.repo,
-              title: `❌ SonarQube Analysis Failed - Coverage: ${coverage}%`,
-              body: `## SonarQube Analysis Failure Notification\n\n**Repository:** ${repoName}\n**Branch:** ${branchName}\n**Commit:** ${sha}\n**Coverage:** ${coverage}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)\n**Exit Code:** ${exitCode}\n\n### Failure Reason\n${failureReason}\n\n### Recommended Actions\n${exitCode !== '0' ? '- Check the workflow logs for specific error details\n- Verify SonarQube connection settings\n- Ensure required secrets are properly configured' : '- Add more unit tests to increase code coverage\n- Review untested code areas\n- Consider implementing test-driven development practices'}\n\n### Links\n- [View Workflow Run](https://github.com/${repoName}/actions/runs/${{ github.run_id }})\n- [View Commit](https://github.com/${repoName}/commit/${context.sha})${exitCode === '0' ? `\n- [View Full Report](${sonarUrl})` : ''}\n\nPlease address these issues before merging this code.`,
-              labels: ['quality-gate-failure', 'needs-attention']
+              title: issueTitle,
+              body: `## SonarQube Analysis Report\n\n**Repository:** ${repoName}\n**Branch:** ${branchName}\n**Commit:** ${sha}\n**Coverage:** ${coverage}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)\n**Exit Code:** ${exitCode}\n\n### Failure Reason\n${failureReason}\n\n### Recommended Actions\n${exitCode !== '0' ? '- Check the workflow logs for specific error details.\n- Verify SonarQube connection settings.\n- Ensure required secrets are properly configured.' : '- Add more unit tests to increase code coverage.\n- Review untested code areas.\n- Consider implementing test-driven development practices.'}\n\n### Links\n- [View Workflow Run](https://github.com/${repoName}/actions/runs/${{ github.run_id }})\n- [View Commit](https://github.com/${repoName}/commit/${context.sha})${exitCode === '0' ? `\n- [View Full Report](${sonarUrl})` : ''}\n\nPlease address these issues before merging this code.`,
+              labels: issueLabels
             });
-            console.log('Created failure issue for SonarQube analysis');
+            console.log('Created issue for SonarQube analysis.');
