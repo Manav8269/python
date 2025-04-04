@@ -366,7 +366,7 @@ jobs:
             });
             console.log('Created success issue for SonarQube analysis');
 
-      - name: Create Failure Issue
+      - name: Create PASSED Issue
         if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
         uses: actions/github-script@v7
         with:
