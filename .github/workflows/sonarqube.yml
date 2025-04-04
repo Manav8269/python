@@ -234,6 +234,7 @@ jobs:
             const sha = context.sha.substring(0, 7);
             const branchName = '${{ github.ref_name }}';
             const sonarUrl = '${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }}';
+            console.log("Generated Sonar URL:", sonarUrl)
             await github.rest.issues.create({
               owner: repo.owner,
               repo: repo.repo,
@@ -256,8 +257,9 @@ jobs:
             const sha = context.sha.substring(0, 7);
             const branchName = '${{ github.ref_name }}';
             const sonarUrl = '${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }}';
+            console.log("Generated Sonar URL:", sonarUrl)
             let failureReason = '';
-            let issueTitle = 'SonarQube Analysis Report'; # Added default title
+            let issueTitle = 'SonarQube Analysis Report';
             let issueLabels = [];
 
             if (exitCode !== '0') {
@@ -282,3 +284,4 @@ jobs:
               labels: issueLabels
             });
             console.log('Created issue for SonarQube analysis.');
+            
