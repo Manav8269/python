@@ -263,9 +263,11 @@ jobs:
             let issueLabels = [];
 
             if (exitCode !== '0') {
+              failureReason = 'SonarQube analysis execution failed.';
               issueTitle = `❌ SonarQube Analysis Failed - Exit Code: ${exitCode}`;
               issueLabels = ['quality-gate-failure', 'needs-attention', 'sonarqube-failure'];
             } else if (coverage < ${{ env.MIN_COVERAGE_THRESHOLD }}) {
+              failureReason = `Code coverage (${coverage}%) is below the minimum threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%.`;
               issueTitle = `⚠️ SonarQube Analysis - Coverage Below Threshold: ${coverage}%`;
               issueLabels = ['quality-gate-failure', 'needs-attention', 'coverage-issue'];
             }
@@ -276,12 +278,19 @@ jobs:
               links += `\n- [View Full Report](${sonarUrl})`;
             }
 
+            let body = `## SonarQube Analysis Report\n\n**Repository:** ${repoName}\n**Branch:** ${branchName}\n**Commit:** ${sha}\n**Coverage:** ${coverage}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)`;
+
+            if (exitCode !== '0' || coverage < ${{ env.MIN_COVERAGE_THRESHOLD }}) {
+                body += `\n\n### Failure Reason\n${failureReason}\n\n### Recommended Actions\n${exitCode !== '0' ? '- Check the workflow logs for specific error details.\n- Verify SonarQube connection settings.\n- Ensure required secrets are properly configured.' : '- Add more unit tests to increase code coverage.\n- Review untested code areas.\n- Consider implementing test-driven development practices.'}`
+            }
+
+            body += `\n\n### Links\n${links}\n\nPlease address these issues before merging this code.`
+
             await github.rest.issues.create({
               owner: repo.owner,
               repo: repo.repo,
               title: issueTitle,
-              body: `## SonarQube Analysis Report\n\n**Repository:** ${repoName}\n**Branch:** ${branchName}\n**Commit:** ${sha}\n**Coverage:** ${coverage}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)\n**Exit Code:** ${exitCode}\n\n### Failure Reason\n${failureReason}\n\n### Recommended Actions\n${exitCode !== '0' ? '- Check the workflow logs for specific error details.\n- Verify SonarQube connection settings.\n- Ensure required secrets are properly configured.' : '- Add more unit tests to increase code coverage.\n- Review untested code areas.\n- Consider implementing test-driven development practices.'}\n\n### Links\n${links}\n\nPlease address these issues before merging this code.`,
+              body: body,
               labels: issueLabels
             });
             console.log('Created issue for SonarQube analysis.');
-            
