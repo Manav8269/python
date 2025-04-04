@@ -26,7 +26,7 @@ jobs:
       security-events: write
       checks: write
       pull-requests: read
-      issues: write  # Added permission for creating issues
+      issues: write
 
     steps:
       - name: Checkout Code
@@ -174,18 +174,108 @@ jobs:
           [ -f "coverage.xml" ] || { echo "Generating empty coverage.xml"; echo '<coverage/>' > coverage.xml; }
           [ -f "junit-results.xml" ] || { echo "Generating empty junit-results.xml"; echo '<testsuites/>' > junit-results.xml; }
 
+      # Clear SonarQube cache before installing scanner to avoid any corrupted cache issues
+      - name: Clear SonarQube Cache
+        run: |
+          rm -rf $HOME/.sonar/cache || true
+          echo "SonarQube cache cleared"
+
       - name: Install SonarScanner
         run: |
           sudo apt-get update -y && sudo apt-get install -y unzip
           SCANNER_DIR="$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION"
           mkdir -p "$HOME/.sonar"
+          
+          # Use a more reliable mirror for downloading
+          echo "Downloading SonarScanner from main release site..."
           curl -sSLo /tmp/sonar-scanner.zip \
             "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION-linux.zip"
+          
+          # Verify download integrity
+          if [ $? -ne 0 ]; then
+            echo "Failed to download SonarScanner. Trying backup mirror..."
+            curl -sSLo /tmp/sonar-scanner.zip \
+              "https://repo1.maven.org/maven2/org/sonarsource/scanner/cli/sonar-scanner-cli/$SONAR_SCANNER_VERSION/sonar-scanner-cli-$SONAR_SCANNER_VERSION-cli.zip"
+          fi
+          
+          # Check file size to ensure proper download
+          FILE_SIZE=$(stat -c%s "/tmp/sonar-scanner.zip")
+          echo "Downloaded file size: $FILE_SIZE bytes"
+          if [ "$FILE_SIZE" -lt 10000 ]; then
+            echo "Warning: Downloaded file is suspiciously small. Download may have failed."
+            exit 1
+          fi
+          
+          # Extract scanner with verification
+          echo "Extracting SonarScanner..."
           unzip -q /tmp/sonar-scanner.zip -d /tmp/
+          if [ $? -ne 0 ]; then
+            echo "Failed to extract SonarScanner."
+            exit 1
+          fi
+          
           mv "/tmp/sonar-scanner-$SONAR_SCANNER_VERSION-linux" "$SCANNER_DIR"
           rm /tmp/sonar-scanner.zip
           echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
           echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
+          
+          # Verify installation
+          ls -la "$SCANNER_DIR/bin" || echo "Failed to list SonarScanner directory"
+          
+          # Check scanner availability
+          if [ -f "$SCANNER_DIR/bin/sonar-scanner" ]; then
+            echo "SonarScanner installed successfully"
+            chmod +x "$SCANNER_DIR/bin/sonar-scanner"
+          else
+            echo "SonarScanner installation failed"
+            exit 1
+          fi
+
+      - name: Optimize SonarQube Analysis Configuration
+        id: sonar_config
+        run: |
+          # Determine project type and optimize exclusions
+          echo "Preparing optimized SonarQube configuration..."
+          
+          # Create a properties file instead of using command line parameters
+          echo "sonar.projectKey=$SONAR_PROJECT_KEY" > sonar-project.properties
+          echo "sonar.projectName=$SONAR_PROJECT_NAME" >> sonar-project.properties
+          echo "sonar.host.url=${{ secrets.SONAR_HOST_URL }}" >> sonar-project.properties
+          echo "sonar.token=${{ secrets.SONAR_TOKEN }}" >> sonar-project.properties
+          echo "sonar.sourceEncoding=UTF-8" >> sonar-project.properties
+          echo "sonar.scm.provider=git" >> sonar-project.properties
+          echo "sonar.scm.revision=$GITHUB_SHA" >> sonar-project.properties
+          echo "sonar.sources=." >> sonar-project.properties
+          echo "sonar.tests=." >> sonar-project.properties
+          echo "sonar.test.inclusions=**/*.test.*,**/__tests__/**/*.*" >> sonar-project.properties
+          echo "sonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**,**/.git/**,**/.github/**,**/target/**,**/.idea/**,**/venv/**" >> sonar-project.properties
+          
+          # Add language-specific configurations based on detected project type
+          if [ "$PYTHON_PROJECT" == "true" ]; then
+            echo "sonar.python.coverage.reportPaths=coverage.xml" >> sonar-project.properties
+            echo "sonar.python.xunit.reportPath=junit-results.xml" >> sonar-project.properties
+            echo "sonar.language=py" >> sonar-project.properties
+            echo "Configured Python-specific properties"
+          fi
+          
+          if [ "$REACT_PROJECT" == "true" ]; then
+            echo "sonar.javascript.lcov.reportPaths=coverage/lcov.info" >> sonar-project.properties
+            echo "sonar.typescript.lcov.reportPaths=coverage/lcov.info" >> sonar-project.properties
+            echo "sonar.testExecutionReportPaths=test-results/sonar-test.xml" >> sonar-project.properties
+            echo "sonar.javascript.file.suffixes=.js,.jsx" >> sonar-project.properties
+            echo "sonar.typescript.file.suffixes=.ts,.tsx" >> sonar-project.properties
+            echo "Configured React-specific properties"
+          elif [ "$ANGULAR_PROJECT" == "true" ]; then
+            echo "sonar.javascript.lcov.reportPaths=coverage/lcov.info" >> sonar-project.properties
+            echo "sonar.typescript.lcov.reportPaths=coverage/lcov.info" >> sonar-project.properties
+            echo "sonar.testExecutionReportPaths=test-results/sonar-test.xml" >> sonar-project.properties
+            echo "sonar.typescript.file.suffixes=.ts" >> sonar-project.properties
+            echo "Configured Angular-specific properties"
+          fi
+          
+          # Display final configuration
+          echo "SonarQube configuration prepared:"
+          cat sonar-project.properties
 
       - name: Run SonarQube Analysis
         id: sonarqube
@@ -193,105 +283,49 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          echo "Preparing SonarQube analysis..."
-          properties=(
-            "-Dsonar.projectKey=$SONAR_PROJECT_KEY"
-            "-Dsonar.projectName=$SONAR_PROJECT_NAME"
-            "-Dsonar.host.url=$SONAR_HOST_URL"
-            "-Dsonar.login=$SONAR_TOKEN"
-            "-Dsonar.sourceEncoding=UTF-8"
-            "-Dsonar.scm.provider=git"
-            "-Dsonar.scm.revision=$GITHUB_SHA"
-            "-Dsonar.working.directory=$RUNNER_TEMP/.sonar"
-            "-Dsonar.sources=."
-            "-Dsonar.tests=."
-            "-Dsonar.test.inclusions=**/*.test.*,**/__tests__/**/*.*"
-            "-Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**"
-          )
-          if [ "$REACT_PROJECT" == "true" ] || [ "$ANGULAR_PROJECT" == "true" ]; then
-            properties+=(
-              "-Dsonar.javascript.lcov.reportPaths=coverage/lcov.info"
-              "-Dsonar.typescript.lcov.reportPaths=coverage/lcov.info"
-              "-Dsonar.testExecutionReportPaths=test-results/sonar-test.xml"
-            )
-          fi
-          if [ "$PYTHON_PROJECT" == "true" ]; then
-            properties+=(
-              "-Dsonar.python.coverage.reportPaths=coverage.xml"
-              "-Dsonar.python.xunit.reportPath=junit-results.xml"
-            )
-          fi
-          if [ "$REACT_PROJECT" == "true" ]; then
-            properties+=(
-              "-Dsonar.javascript.react.reactEnabled=true"
-              "-Dsonar.javascript.file.suffixes=.js,.jsx"
-              "-Dsonar.typescript.file.suffixes=.ts,.tsx"
-            )
-          elif [ "$ANGULAR_PROJECT" == "true" ]; then
-            properties+=(
-              "-Dsonar.angular.enabled=true"
-              "-Dsonar.typescript.file.suffixes=.ts"
-            )
-          fi
-          echo "Running SonarScanner with:"
-          printf '%s\n' "${properties[@]}"
+          echo "Running SonarQube analysis..."
           
-          # Run the scanner and save the exit code
-          sonar-scanner "${properties[@]}"
-          SONAR_EXIT_CODE=$?
+          # Set network timeouts to avoid download issues
+          export SONAR_SCANNER_OPTS="-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv6Addresses=false -Dsonar.forceAuthentication=true -Dsonar.network.timeout=300000 -Dsonar.download.timeout=300000"
           
-          # Report result
-          echo "SonarQube analysis completed with status $SONAR_EXIT_CODE"
+          # Run with debug logs to better diagnose issues
+          $SONAR_SCANNER_HOME/bin/sonar-scanner -X || {
+            SONAR_EXIT_CODE=$?
+            echo "SonarQube analysis failed with exit code $SONAR_EXIT_CODE"
+            
+            # Try running with different JVM settings for reliable plugin download
+            echo "Retrying with alternative settings..."
+            export SONAR_SCANNER_OPTS="-Dhttp.keepAlive=false -Dhttp.maxConnections=10 -Dsonar.log.level=DEBUG -Dsonar.host.connectTimeout=300000 -Dsonar.host.readTimeout=300000"
+            
+            # Second attempt with a clean temporary directory
+            rm -rf $RUNNER_TEMP/.sonar || true
+            mkdir -p $RUNNER_TEMP/.sonar
+            
+            $SONAR_SCANNER_HOME/bin/sonar-scanner -Dsonar.working.directory=$RUNNER_TEMP/.sonar
+            SONAR_EXIT_CODE=$?
+          }
           
-          # Output to workflow steps
           echo "sonar_exit_code=$SONAR_EXIT_CODE" >> $GITHUB_OUTPUT
           
-          # If successful, extract the coverage percentage from the report
-          if [ $SONAR_EXIT_CODE -eq 0 ]; then
-            if [ "$REACT_PROJECT" == "true" ] || [ "$ANGULAR_PROJECT" == "true" ]; then
-              # Extract coverage percentage from lcov info file
-              if [ -f "coverage/lcov.info" ]; then
-                # Count total lines and covered lines
-                TOTAL_LINES=$(grep -c "LF:" coverage/lcov.info || echo 0)
-                COVERED_LINES=$(grep -c "LH:" coverage/lcov.info || echo 0)
-                
-                if [ $TOTAL_LINES -gt 0 ]; then
-                  COVERAGE_PERCENT=$(awk "BEGIN {print (($COVERED_LINES/$TOTAL_LINES) * 100)}")
-                  echo "coverage_percent=$COVERAGE_PERCENT" >> $GITHUB_OUTPUT
-                  echo "Calculated coverage percentage: $COVERAGE_PERCENT%"
-                else
-                  echo "coverage_percent=0" >> $GITHUB_OUTPUT
-                  echo "No coverage information found"
-                fi
-              else
-                echo "coverage_percent=0" >> $GITHUB_OUTPUT
-                echo "No coverage file found"
-              fi
-            elif [ "$PYTHON_PROJECT" == "true" ]; then
-              # Extract coverage from Python coverage.xml
-              if [ -f "coverage.xml" ]; then
-                COVERAGE_PERCENT=$(grep -o 'line-rate="[0-9.]*"' coverage.xml | head -1 | cut -d'"' -f2)
-                if [ -n "$COVERAGE_PERCENT" ]; then
-                  # Convert from decimal to percentage
-                  COVERAGE_PERCENT=$(awk "BEGIN {print ($COVERAGE_PERCENT * 100)}")
-                  echo "coverage_percent=$COVERAGE_PERCENT" >> $GITHUB_OUTPUT
-                  echo "Calculated coverage percentage: $COVERAGE_PERCENT%"
-                else
-                  echo "coverage_percent=0" >> $GITHUB_OUTPUT
-                  echo "No coverage percentage found in the XML"
-                fi
-              else
-                echo "coverage_percent=0" >> $GITHUB_OUTPUT
-                echo "No coverage file found"
-              fi
-            else
-              echo "coverage_percent=0" >> $GITHUB_OUTPUT
-              echo "Unable to determine project type for coverage calculation"
+          # Extract coverage percentage
+          COVERAGE_PERCENT=0
+          if [ "$PYTHON_PROJECT" == "true" ] && [ -f "coverage.xml" ]; then
+            COVERAGE_LINE=$(grep -o 'line-rate="[0-9.]*"' coverage.xml | head -1 || echo 'line-rate="0"')
+            COVERAGE_VALUE=$(echo $COVERAGE_LINE | grep -o '[0-9.]*' || echo "0")
+            COVERAGE_PERCENT=$(echo "$COVERAGE_VALUE * 100" | bc -l || echo "0")
+            COVERAGE_PERCENT=$(printf "%.2f" $COVERAGE_PERCENT)
+          elif [ -f "coverage/lcov.info" ]; then
+            TOTAL_LINES=$(grep -c "LF:" coverage/lcov.info || echo 0)
+            COVERED_LINES=$(grep -c "LH:" coverage/lcov.info || echo 0)
+            
+            if [ $TOTAL_LINES -gt 0 ]; then
+              COVERAGE_PERCENT=$(echo "scale=2; ($COVERED_LINES/$TOTAL_LINES) * 100" | bc -l || echo "0")
+              COVERAGE_PERCENT=$(printf "%.2f" $COVERAGE_PERCENT)
             fi
-          else
-            echo "coverage_percent=0" >> $GITHUB_OUTPUT
-            echo "SonarQube analysis failed, skipping coverage calculation"
           fi
+          
+          echo "Calculated coverage percentage: $COVERAGE_PERCENT%"
+          echo "coverage_percent=$COVERAGE_PERCENT" >> $GITHUB_OUTPUT
 
       - name: Create Success Issue
         if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
