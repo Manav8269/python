@@ -24,7 +24,7 @@ jobs:
       contents: read
       security-events: write
       checks: write
-      pull-requests: read
+      pull-requests: write
       issues: write
 
     steps:
@@ -59,7 +59,6 @@ jobs:
             PY_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3.8")
             echo "PYTHON_VERSION=$PY_VERSION" >> $GITHUB_ENV
           fi
-
       - name: Setup Node.js
         if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
         uses: actions/setup-node@v4
@@ -84,7 +83,6 @@ jobs:
             npm install --package-lock-only --no-audit --no-fund --loglevel=error
           fi
           npm install --no-audit --no-fund --loglevel=error
-
       - name: Run JavaScript Tests
         if: env.REACT_PROJECT == 'true' || env.ANGULAR_PROJECT == 'true'
         run: |
@@ -111,7 +109,6 @@ jobs:
             done
             echo '</testExecutions>' >> test-results/sonar-test.xml
           fi
-
       - name: Install Python Dependencies
         if: env.PYTHON_PROJECT == 'true'
         run: |
@@ -120,19 +117,16 @@ jobs:
             python -m pip install -r requirements.txt
           fi
           python -m pip install coverage pytest pytest-cov
-
       - name: Run Python Tests
         if: env.PYTHON_PROJECT == 'true'
         run: |
           python -m pytest --cov=. --cov-report=xml:coverage.xml --junitxml=junit-results.xml -v || echo "Python tests completed with warnings"
           [ -f "coverage.xml" ] || { echo "Generating empty coverage.xml"; echo '<coverage/>' > coverage.xml; }
           [ -f "junit-results.xml" ] || { echo "Generating empty junit-results.xml"; echo '<testsuites/>' > junit-results.xml; }
-
       - name: Clear SonarQube Cache
         run: |
           rm -rf $HOME/.sonar/cache || true
           echo "SonarQube cache cleared"
-
       - name: Install SonarScanner
         run: |
           sudo apt-get update -y && sudo apt-get install -y unzip
@@ -153,7 +147,6 @@ jobs:
           echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
           echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
           chmod +x "$SCANNER_DIR/bin/sonar-scanner"
-
       - name: Optimize SonarQube Analysis Configuration
         id: sonar_config
         run: |
@@ -187,7 +180,6 @@ jobs:
             echo "sonar.typescript.file.suffixes=.ts" >> sonar-project.properties
           fi
           cat sonar-project.properties
-
       - name: Run SonarQube Analysis
         id: sonarqube
         env:
@@ -216,12 +208,60 @@ jobs:
           echo "Calculated coverage percentage: $COVERAGE_PERCENT%"
           echo "coverage_percent=$COVERAGE_PERCENT" >> $GITHUB_OUTPUT
           echo "Minimum coverage threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%"
-
       - name: Debug Sonar Variables
         run: |
           echo "Sonar Host URL: ${{ secrets.SONAR_HOST_URL }}"
           echo "Sonar Project Key: ${{ env.SONAR_PROJECT_KEY }}"
+      
+      # New step: Create Success Summary for GitHub Actions UI
+      - name: Create Success Summary
+        if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
+        run: |
+          echo "## ✅ Code Approved: Coverage ${{ steps.sonarqube.outputs.coverage_percent }}% meets threshold!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Coverage:** ${{ steps.sonarqube.outputs.coverage_percent }}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🔗 [View Full SonarQube Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})" >> $GITHUB_STEP_SUMMARY
 
+      # New step: Create Failure Summary for GitHub Actions UI
+      - name: Create Failure Summary
+        if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
+        run: |
+          echo "## ❌ Code Coverage Below Threshold: ${{ steps.sonarqube.outputs.coverage_percent }}%" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Coverage:** ${{ steps.sonarqube.outputs.coverage_percent }}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Please improve test coverage before merging!" >> $GITHUB_STEP_SUMMARY
+
+      # New step: Add comment on PR for successful analysis
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const coverage = parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}').toFixed(2);
+            const comment = `## ✅ Code Approved!
+            
+            **SonarQube Analysis passed with ${coverage}% coverage**
+            
+            The code quality meets all requirements and is ready for review.
+            [View Full Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      # Keep the existing issue creation steps
       - name: Create Success Issue
         if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
         uses: actions/github-script@v7
@@ -243,7 +283,6 @@ jobs:
               labels: ['quality-gate-success', 'high-coverage', 'code-passed']
             });
             console.log('Created success issue for SonarQube analysis');
-
       - name: Create PASSED Issue
         if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
         uses: actions/github-script@v7
@@ -261,7 +300,6 @@ jobs:
             let failureReason = '';
             let issueTitle = 'SonarQube Analysis Report';
             let issueLabels = [];
-
             if (exitCode !== '0') {
               failureReason = 'SonarQube analysis execution failed.';
               issueTitle = `❌ SonarQube Analysis Failed - Exit Code: ${exitCode}`;
@@ -271,21 +309,15 @@ jobs:
               issueTitle = `⚠️ SonarQube Analysis - Coverage Below Threshold: ${coverage}%`;
               issueLabels = ['quality-gate-failure', 'needs-attention', 'coverage-issue'];
             }
-
             let links = `- [View Workflow Run](https://github.com/${repoName}/actions/runs/${{ github.run_id }})\n- [View Commit](https://github.com/${repoName}/commit/${context.sha})`;
-
             if (exitCode === '0') {
               links += `\n- [View Full Report](${sonarUrl})`;
             }
-
             let body = `## SonarQube Analysis Report\n\n**Repository:** ${repoName}\n**Branch:** ${branchName}\n**Commit:** ${sha}\n**Coverage:** ${coverage}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)`;
-
             if (exitCode !== '0' || coverage < ${{ env.MIN_COVERAGE_THRESHOLD }}) {
                 body += `\n\n### Failure Reason\n${failureReason}\n\n### Recommended Actions\n${exitCode !== '0' ? '- Check the workflow logs for specific error details.\n- Verify SonarQube connection settings.\n- Ensure required secrets are properly configured.' : '- Add more unit tests to increase code coverage.\n- Review untested code areas.\n- Consider implementing test-driven development practices.'}`
             }
-
             body += `\n\n### Links\n${links}\n\nPlease address these issues before merging this code.`
-
             await github.rest.issues.create({
               owner: repo.owner,
               repo: repo.repo,
