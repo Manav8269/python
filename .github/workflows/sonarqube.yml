@@ -217,6 +217,11 @@ jobs:
           echo "coverage_percent=$COVERAGE_PERCENT" >> $GITHUB_OUTPUT
           echo "Minimum coverage threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%"
 
+      - name: Debug Sonar Variables
+        run: |
+          echo "Sonar Host URL: ${{ secrets.SONAR_HOST_URL }}"
+          echo "Sonar Project Key: ${{ env.SONAR_PROJECT_KEY }}"
+
       - name: Create Success Issue
         if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
         uses: actions/github-script@v7
