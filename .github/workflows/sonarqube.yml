@@ -252,15 +252,13 @@ jobs:
             const branchName = '${{ github.ref_name }}';
             const sonarUrl = '${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }}';
             let failureReason = '';
-            let issueTitle = '';
+            let issueTitle = 'SonarQube Analysis Report'; # Added default title
             let issueLabels = [];
 
             if (exitCode !== '0') {
-              failureReason = 'SonarQube analysis execution failed.';
               issueTitle = `❌ SonarQube Analysis Failed - Exit Code: ${exitCode}`;
               issueLabels = ['quality-gate-failure', 'needs-attention', 'sonarqube-failure'];
             } else if (coverage < ${{ env.MIN_COVERAGE_THRESHOLD }}) {
-              failureReason = `Code coverage (${coverage}%) is below the minimum threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%.`;
               issueTitle = `⚠️ SonarQube Analysis - Coverage Below Threshold: ${coverage}%`;
               issueLabels = ['quality-gate-failure', 'needs-attention', 'coverage-issue'];
             }
