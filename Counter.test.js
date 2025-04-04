@@ -25,5 +25,6 @@ test('decrements counter when the "Decrement" button is clicked', () => {
   fireEvent.click(incrementButton); // Increment to 1
   fireEvent.click(decrementButton); // Decrement back to 0
 
-  expect(screen.getByText(/Counter: 0/i)).toBeInTheDocument();
+  expect(screen.getByTestId("count")).toHaveTextContent("0");
+
 });
