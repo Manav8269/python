@@ -15,7 +15,7 @@ env:
   PYTHONUTF8: 1
   NODE_VERSION: '18'
   SONAR_SCANNER_VERSION: "5.0.1.3006"
-  MIN_COVERAGE_THRESHOLD: 80
+  COVERAGE_THRESHOLD: 80
 
 jobs:
   analyze:
@@ -26,7 +26,7 @@ jobs:
       security-events: write
       checks: write
       pull-requests: read
-      issues: write
+      issues: write  # Added permission to create issues
 
     steps:
       - name: Checkout Code
@@ -47,14 +47,17 @@ jobs:
           echo "PYTHON_PROJECT=false" >> $GITHUB_ENV
           echo "REACT_PROJECT=false" >> $GITHUB_ENV
           echo "ANGULAR_PROJECT=false" >> $GITHUB_ENV
+
           if find . -name '*.jsx' -o -name '*.tsx' -o -name '*.test.js' -o -name '*.test.tsx' | grep -q .; then
             echo "REACT_PROJECT=true" >> $GITHUB_ENV
             echo "SOURCE_DIR=$(find . -name '*.jsx' -o -name '*.tsx' | head -1 | xargs dirname)" >> $GITHUB_ENV
           fi
+
           if [ -f "angular.json" ]; then
             echo "ANGULAR_PROJECT=true" >> $GITHUB_ENV
             echo "SOURCE_DIR=src" >> $GITHUB_ENV
           fi
+
           if find . -name '*.py' | grep -q .; then
             echo "PYTHON_PROJECT=true" >> $GITHUB_ENV
             PY_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3.8")
@@ -82,10 +85,12 @@ jobs:
                   ["@babel/preset-react", { "runtime": "automatic" }]
                 ]
               }' > babel.config.json
+
               echo 'import "@testing-library/jest-dom";' > jest.setup.js
             else
               npm install jest jest-junit --save-dev
             fi
+
             echo '{
               "collectCoverage": true,
               "coverageReporters": ["lcov", "text"],
@@ -111,9 +116,11 @@ jobs:
               ]
             }' > jest.config.json
           fi
+
           if [ ! -f "package-lock.json" ] && [ ! -f "yarn.lock" ]; then
             npm install --package-lock-only --no-audit --no-fund --loglevel=error
           fi
+
           npm install --no-audit --no-fund --loglevel=error
 
       - name: Run JavaScript Tests
@@ -138,6 +145,7 @@ jobs:
               </testsuite>
             </testsuites>' > test-results/jest-junit.xml
           fi
+
           # Convert jest-junit format to SonarQube expected format
           if [ -f "test-results/jest-junit.xml" ]; then
             echo '<?xml version="1.0" encoding="UTF-8"?>
@@ -174,108 +182,18 @@ jobs:
           [ -f "coverage.xml" ] || { echo "Generating empty coverage.xml"; echo '<coverage/>' > coverage.xml; }
           [ -f "junit-results.xml" ] || { echo "Generating empty junit-results.xml"; echo '<testsuites/>' > junit-results.xml; }
 
-      # Clear SonarQube cache before installing scanner to avoid any corrupted cache issues
-      - name: Clear SonarQube Cache
-        run: |
-          rm -rf $HOME/.sonar/cache || true
-          echo "SonarQube cache cleared"
-
       - name: Install SonarScanner
         run: |
           sudo apt-get update -y && sudo apt-get install -y unzip
           SCANNER_DIR="$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION"
           mkdir -p "$HOME/.sonar"
-          
-          # Use a more reliable mirror for downloading
-          echo "Downloading SonarScanner from main release site..."
           curl -sSLo /tmp/sonar-scanner.zip \
             "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION-linux.zip"
-          
-          # Verify download integrity
-          if [ $? -ne 0 ]; then
-            echo "Failed to download SonarScanner. Trying backup mirror..."
-            curl -sSLo /tmp/sonar-scanner.zip \
-              "https://repo1.maven.org/maven2/org/sonarsource/scanner/cli/sonar-scanner-cli/$SONAR_SCANNER_VERSION/sonar-scanner-cli-$SONAR_SCANNER_VERSION-cli.zip"
-          fi
-          
-          # Check file size to ensure proper download
-          FILE_SIZE=$(stat -c%s "/tmp/sonar-scanner.zip")
-          echo "Downloaded file size: $FILE_SIZE bytes"
-          if [ "$FILE_SIZE" -lt 10000 ]; then
-            echo "Warning: Downloaded file is suspiciously small. Download may have failed."
-            exit 1
-          fi
-          
-          # Extract scanner with verification
-          echo "Extracting SonarScanner..."
           unzip -q /tmp/sonar-scanner.zip -d /tmp/
-          if [ $? -ne 0 ]; then
-            echo "Failed to extract SonarScanner."
-            exit 1
-          fi
-          
           mv "/tmp/sonar-scanner-$SONAR_SCANNER_VERSION-linux" "$SCANNER_DIR"
           rm /tmp/sonar-scanner.zip
           echo "$SCANNER_DIR/bin" >> $GITHUB_PATH
           echo "SONAR_SCANNER_HOME=$SCANNER_DIR" >> $GITHUB_ENV
-          
-          # Verify installation
-          ls -la "$SCANNER_DIR/bin" || echo "Failed to list SonarScanner directory"
-          
-          # Check scanner availability
-          if [ -f "$SCANNER_DIR/bin/sonar-scanner" ]; then
-            echo "SonarScanner installed successfully"
-            chmod +x "$SCANNER_DIR/bin/sonar-scanner"
-          else
-            echo "SonarScanner installation failed"
-            exit 1
-          fi
-
-      - name: Optimize SonarQube Analysis Configuration
-        id: sonar_config
-        run: |
-          # Determine project type and optimize exclusions
-          echo "Preparing optimized SonarQube configuration..."
-          
-          # Create a properties file instead of using command line parameters
-          echo "sonar.projectKey=$SONAR_PROJECT_KEY" > sonar-project.properties
-          echo "sonar.projectName=$SONAR_PROJECT_NAME" >> sonar-project.properties
-          echo "sonar.host.url=${{ secrets.SONAR_HOST_URL }}" >> sonar-project.properties
-          echo "sonar.token=${{ secrets.SONAR_TOKEN }}" >> sonar-project.properties
-          echo "sonar.sourceEncoding=UTF-8" >> sonar-project.properties
-          echo "sonar.scm.provider=git" >> sonar-project.properties
-          echo "sonar.scm.revision=$GITHUB_SHA" >> sonar-project.properties
-          echo "sonar.sources=." >> sonar-project.properties
-          echo "sonar.tests=." >> sonar-project.properties
-          echo "sonar.test.inclusions=**/*.test.*,**/__tests__/**/*.*" >> sonar-project.properties
-          echo "sonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**,**/.git/**,**/.github/**,**/target/**,**/.idea/**,**/venv/**" >> sonar-project.properties
-          
-          # Add language-specific configurations based on detected project type
-          if [ "$PYTHON_PROJECT" == "true" ]; then
-            echo "sonar.python.coverage.reportPaths=coverage.xml" >> sonar-project.properties
-            echo "sonar.python.xunit.reportPath=junit-results.xml" >> sonar-project.properties
-            echo "sonar.language=py" >> sonar-project.properties
-            echo "Configured Python-specific properties"
-          fi
-          
-          if [ "$REACT_PROJECT" == "true" ]; then
-            echo "sonar.javascript.lcov.reportPaths=coverage/lcov.info" >> sonar-project.properties
-            echo "sonar.typescript.lcov.reportPaths=coverage/lcov.info" >> sonar-project.properties
-            echo "sonar.testExecutionReportPaths=test-results/sonar-test.xml" >> sonar-project.properties
-            echo "sonar.javascript.file.suffixes=.js,.jsx" >> sonar-project.properties
-            echo "sonar.typescript.file.suffixes=.ts,.tsx" >> sonar-project.properties
-            echo "Configured React-specific properties"
-          elif [ "$ANGULAR_PROJECT" == "true" ]; then
-            echo "sonar.javascript.lcov.reportPaths=coverage/lcov.info" >> sonar-project.properties
-            echo "sonar.typescript.lcov.reportPaths=coverage/lcov.info" >> sonar-project.properties
-            echo "sonar.testExecutionReportPaths=test-results/sonar-test.xml" >> sonar-project.properties
-            echo "sonar.typescript.file.suffixes=.ts" >> sonar-project.properties
-            echo "Configured Angular-specific properties"
-          fi
-          
-          # Display final configuration
-          echo "SonarQube configuration prepared:"
-          cat sonar-project.properties
 
       - name: Run SonarQube Analysis
         id: sonarqube
@@ -283,120 +201,124 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          echo "Running SonarQube analysis..."
+          echo "Preparing SonarQube analysis..."
+          properties=(
+            "-Dsonar.projectKey=$SONAR_PROJECT_KEY"
+            "-Dsonar.projectName=$SONAR_PROJECT_NAME"
+            "-Dsonar.host.url=$SONAR_HOST_URL"
+            "-Dsonar.login=$SONAR_TOKEN"
+            "-Dsonar.sourceEncoding=UTF-8"
+            "-Dsonar.scm.provider=git"
+            "-Dsonar.scm.revision=$GITHUB_SHA"
+            "-Dsonar.working.directory=$RUNNER_TEMP/.sonar"
+            "-Dsonar.sources=."
+            "-Dsonar.tests=."
+            "-Dsonar.test.inclusions=**/*.test.*,**/__tests__/**/*.*"
+            "-Dsonar.exclusions=**/node_modules/**,**/dist/**,**/coverage/**"
+          )
+
+          if [ "$REACT_PROJECT" == "true" ] || [ "$ANGULAR_PROJECT" == "true" ]; then
+            properties+=(
+              "-Dsonar.javascript.lcov.reportPaths=coverage/lcov.info"
+              "-Dsonar.typescript.lcov.reportPaths=coverage/lcov.info"
+              "-Dsonar.testExecutionReportPaths=test-results/sonar-test.xml"
+            )
+          fi
+
+          if [ "$PYTHON_PROJECT" == "true" ]; then
+            properties+=(
+              "-Dsonar.python.coverage.reportPaths=coverage.xml"
+              "-Dsonar.python.xunit.reportPath=junit-results.xml"
+            )
+          fi
+
+          if [ "$REACT_PROJECT" == "true" ]; then
+            properties+=(
+              "-Dsonar.javascript.react.reactEnabled=true"
+              "-Dsonar.javascript.file.suffixes=.js,.jsx"
+              "-Dsonar.typescript.file.suffixes=.ts,.tsx"
+            )
+          elif [ "$ANGULAR_PROJECT" == "true" ]; then
+            properties+=(
+              "-Dsonar.angular.enabled=true"
+              "-Dsonar.typescript.file.suffixes=.ts"
+            )
+          fi
+
+          echo "Running SonarScanner with:"
+          printf '%s\n' "${properties[@]}"
           
-          # Set network timeouts to avoid download issues
-          export SONAR_SCANNER_OPTS="-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv6Addresses=false -Dsonar.forceAuthentication=true -Dsonar.network.timeout=300000 -Dsonar.download.timeout=300000"
-          
-          # First attempt - standard run
-          $SONAR_SCANNER_HOME/bin/sonar-scanner -X || true
-          
-          # Force success for now - we'll determine actual success based on coverage
-          echo "ANALYSIS_SUCCESS=true" >> $GITHUB_ENV
-          
-          # Extract coverage percentage
-          COVERAGE_PERCENT=0
-          if [ "$PYTHON_PROJECT" == "true" ] && [ -f "coverage.xml" ]; then
-            COVERAGE_LINE=$(grep -o 'line-rate="[0-9.]*"' coverage.xml | head -1 || echo 'line-rate="0"')
-            COVERAGE_VALUE=$(echo $COVERAGE_LINE | grep -o '[0-9.]*' || echo "0")
-            COVERAGE_PERCENT=$(echo "$COVERAGE_VALUE * 100" | bc -l || echo "0")
-            COVERAGE_PERCENT=$(printf "%.2f" $COVERAGE_PERCENT)
-          elif [ -f "coverage/lcov.info" ]; then
-            TOTAL_LINES=$(grep "LF:" coverage/lcov.info | awk '{sum+=$2} END {print sum}' || echo 0)
-            COVERED_LINES=$(grep "LH:" coverage/lcov.info | awk '{sum+=$2} END {print sum}' || echo 0)
-            
-            if [ $TOTAL_LINES -gt 0 ]; then
-              COVERAGE_PERCENT=$(echo "scale=2; ($COVERED_LINES/$TOTAL_LINES) * 100" | bc -l || echo "0")
-              COVERAGE_PERCENT=$(printf "%.2f" $COVERAGE_PERCENT)
+          sonar-scanner "${properties[@]}"
+          echo "SonarQube analysis completed with status $?"
+
+      - name: Extract Coverage Metrics
+        id: extract_coverage
+        run: |
+          if [ "$REACT_PROJECT" == "true" ] || [ "$ANGULAR_PROJECT" == "true" ]; then
+            if [ -f "coverage/lcov.info" ]; then
+              # Extract coverage percentage from lcov.info
+              LINES_COVERED=$(grep -o "LH:[0-9]*" coverage/lcov.info | awk -F':' '{sum+=$2} END {print sum}')
+              LINES_TOTAL=$(grep -o "LF:[0-9]*" coverage/lcov.info | awk -F':' '{sum+=$2} END {print sum}')
+              
+              if [ "$LINES_TOTAL" -gt 0 ]; then
+                COVERAGE_PERCENT=$(awk "BEGIN {printf \"%.2f\", ($LINES_COVERED/$LINES_TOTAL)*100}")
+              else
+                COVERAGE_PERCENT="0.00"
+              fi
+            else
+              COVERAGE_PERCENT="0.00"
             fi
-          fi
-          
-          echo "Calculated coverage percentage: $COVERAGE_PERCENT%"
-          echo "COVERAGE_PERCENT=$COVERAGE_PERCENT" >> $GITHUB_ENV
-          
-          # Check if coverage meets threshold
-          if (( $(echo "$COVERAGE_PERCENT >= $MIN_COVERAGE_THRESHOLD" | bc -l) )); then
-            echo "COVERAGE_MEETS_THRESHOLD=true" >> $GITHUB_ENV
+          elif [ "$PYTHON_PROJECT" == "true" ]; then
+            if [ -f "coverage.xml" ]; then
+              # Extract coverage percentage from coverage.xml
+              COVERAGE_PERCENT=$(grep -o 'line-rate="[0-9.]*"' coverage.xml | head -1 | cut -d'"' -f2)
+              COVERAGE_PERCENT=$(awk "BEGIN {printf \"%.2f\", $COVERAGE_PERCENT*100}")
+            else
+              COVERAGE_PERCENT="0.00"
+            fi
           else
-            echo "COVERAGE_MEETS_THRESHOLD=false" >> $GITHUB_ENV
+            COVERAGE_PERCENT="0.00"
           fi
-      
-      # Create a single notification based on coverage threshold
-      - name: Create GitHub Issue Notification
+          
+          echo "COVERAGE_PERCENT=$COVERAGE_PERCENT" >> $GITHUB_ENV
+          echo "Coverage percentage: $COVERAGE_PERCENT%"
+
+      - name: Create GitHub Issue for Results
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const coverage = parseFloat('${{ env.COVERAGE_PERCENT }}').toFixed(2);
-            const meetsCoverage = '${{ env.COVERAGE_MEETS_THRESHOLD }}' === 'true';
-            const analysisSuccess = '${{ env.ANALYSIS_SUCCESS }}' === 'true';
-            const repo = context.repo;
-            const repoName = '${{ github.repository }}';
-            const sha = context.sha.substring(0, 7);
-            const branchName = '${{ github.ref_name }}';
-            const sonarUrl = '${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }}';
+            const coveragePercent = parseFloat(process.env.COVERAGE_PERCENT);
+            const threshold = parseFloat(process.env.COVERAGE_THRESHOLD);
+            const passed = coveragePercent >= threshold;
             
-            // Create different issue types based on coverage
-            if (meetsCoverage && analysisSuccess) {
-              // Success notification
-              await github.rest.issues.create({
-                owner: repo.owner,
-                repo: repo.repo,
-                title: `✅ SonarQube Analysis Success - Coverage: ${coverage}%`,
-                body: `## SonarQube Analysis Success Notification
-                
-                **Repository:** ${repoName}
-                **Branch:** ${branchName}
-                **Commit:** ${sha}
-                **Coverage:** ${coverage}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)
-                
-                Congratulations! Your code has passed the SonarQube analysis with excellent code coverage.
-                
-                ### Details
-                - The code coverage exceeds the minimum threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%
-                - Analysis was completed successfully
-                
-                ### Links
-                - [View Full Report](${sonarUrl})
-                - [View Commit](https://github.com/${repoName}/commit/${context.sha})
-                
-                Great work! Keep up the good testing practices.`,
-                labels: ['quality-gate-success', 'high-coverage']
-              });
-              console.log('Created success issue for SonarQube analysis');
-            } else {
-              // Failure notification - either low coverage or analysis failure
-              const failureReason = !meetsCoverage ? 
-                `Code coverage (${coverage}%) is below the minimum threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%` : 
-                'SonarQube analysis execution failed';
-              
-              await github.rest.issues.create({
-                owner: repo.owner,
-                repo: repo.repo,
-                title: `❌ SonarQube Analysis Failed - Coverage: ${coverage}%`,
-                body: `## SonarQube Analysis Failure Notification
-                
-                **Repository:** ${repoName}
-                **Branch:** ${branchName}
-                **Commit:** ${sha}
-                **Coverage:** ${coverage}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)
-                
-                ### Failure Reason
-                ${failureReason}
-                
-                ### Recommended Actions
-                ${!meetsCoverage ? 
-                  '- Add more unit tests to increase code coverage\n- Review untested code areas\n- Consider implementing test-driven development practices' : 
-                  '- Check the workflow logs for specific error details\n- Verify SonarQube connection settings\n- Ensure required secrets are properly configured'
-                }
-                
-                ### Links
-                - [View Workflow Run](https://github.com/${repoName}/actions/runs/${{ github.run_id }})
-                - [View Commit](https://github.com/${repoName}/commit/${context.sha})
-                ${analysisSuccess ? `- [View Full Report](${sonarUrl})` : ''}
-                
-                Please address these issues before merging this code.`,
-                labels: ['quality-gate-failure', 'needs-attention']
-              });
-              console.log('Created failure issue for SonarQube analysis');
+            const title = passed 
+              ? `✅ Code Coverage Passed: ${coveragePercent}% ≥ ${threshold}%` 
+              : `❌ Code Coverage Failed: ${coveragePercent}% < ${threshold}%`;
+            
+            const body = passed
+              ? `## Code Coverage Report: PASSED\n\n` +
+                `- Current coverage: **${coveragePercent}%**\n` + 
+                `- Required threshold: **${threshold}%**\n\n` +
+                `The code met or exceeded the required code coverage threshold. Great job!`
+              : `## Code Coverage Report: FAILED\n\n` +
+                `- Current coverage: **${coveragePercent}%**\n` + 
+                `- Required threshold: **${threshold}%**\n\n` +
+                `The code did not meet the required code coverage threshold. Please add more tests to increase coverage.\n\n` +
+                `Coverage needs to improve by at least **${(threshold - coveragePercent).toFixed(2)}%** to pass.`;
+            
+            const issueData = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: [passed ? 'coverage-ok' : 'coverage-insufficient']
+            };
+            
+            const issue = await github.rest.issues.create(issueData);
+            console.log(`Created issue #${issue.data.number}: ${title}`);
+            
+            // If coverage is below threshold, fail the workflow
+            if (!passed) {
+              core.setFailed(`Code coverage is ${coveragePercent}%, which is below the threshold of ${threshold}%`);
             }
