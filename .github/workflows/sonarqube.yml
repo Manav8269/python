@@ -199,11 +199,13 @@ jobs:
           $SONAR_SCANNER_HOME/bin/sonar-scanner -X || {
             SONAR_EXIT_CODE=$?
             echo "SonarQube analysis failed with exit code $SONAR_EXIT_CODE"
+            echo "Sonar Scanner failed, attempting retry"
             export SONAR_SCANNER_OPTS="-Dhttp.keepAlive=false -Dhttp.maxConnections=10 -Dsonar.log.level=DEBUG -Dsonar.host.connectTimeout=300000 -Dsonar.host.readTimeout=300000"
             rm -rf $RUNNER_TEMP/.sonar || true
             mkdir -p $RUNNER_TEMP/.sonar
             $SONAR_SCANNER_HOME/bin/sonar-scanner -Dsonar.working.directory=$RUNNER_TEMP/.sonar
             SONAR_EXIT_CODE=$?
+            echo "Sonar scanner exit code after retry: $SONAR_EXIT_CODE" # added debug line.
           }
           echo "sonar_exit_code=$SONAR_EXIT_CODE" >> $GITHUB_OUTPUT
           COVERAGE_PERCENT=0
