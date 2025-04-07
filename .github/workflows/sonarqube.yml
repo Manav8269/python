@@ -213,7 +213,7 @@ jobs:
           echo "Sonar Host URL: ${{ secrets.SONAR_HOST_URL }}"
           echo "Sonar Project Key: ${{ env.SONAR_PROJECT_KEY }}"
       
-      # New step: Create Success Summary for GitHub Actions UI
+      # Create Success Summary for GitHub Actions UI
       - name: Create Success Summary
         if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
         run: |
@@ -226,7 +226,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "🔗 [View Full SonarQube Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})" >> $GITHUB_STEP_SUMMARY
 
-      # New step: Create Failure Summary for GitHub Actions UI
+      # Create Failure Summary for GitHub Actions UI
       - name: Create Failure Summary
         if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
         run: |
@@ -239,7 +239,25 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Please improve test coverage before merging!" >> $GITHUB_STEP_SUMMARY
 
-      # New step: Add comment on PR for successful analysis
+      # Create a popup notification for success
+      - name: Show Success Popup
+        if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            core.notice(`✅ Code Coverage: ${parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}').toFixed(2)}% - Passed Threshold!`, {title: 'SonarQube Check Success'})
+
+      # Create a popup notification for failure
+      - name: Show Failure Popup
+        if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            core.error(`❌ Code Coverage: ${parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}').toFixed(2)}% - Below Threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%`, {title: 'SonarQube Check Failed'})
+
+      # Comment on PR for successful analysis
       - name: Comment on PR
         if: github.event_name == 'pull_request' && steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
         uses: actions/github-script@v7
@@ -261,7 +279,29 @@ jobs:
               body: comment
             });
 
-      # Keep the existing issue creation steps
+      # Comment on PR for failed analysis
+      - name: Comment Failed Analysis on PR
+        if: github.event_name == 'pull_request' && (steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD)
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const coverage = parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}').toFixed(2);
+            const comment = `## ❌ Code Coverage Check Failed!
+            
+            **Current coverage is ${coverage}% (Required: ${{ env.MIN_COVERAGE_THRESHOLD }}%)**
+            
+            Please add more tests to increase code coverage before merging.
+            [View Details](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      # Create Success Issue
       - name: Create Success Issue
         if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
         uses: actions/github-script@v7
@@ -283,6 +323,8 @@ jobs:
               labels: ['quality-gate-success', 'high-coverage', 'code-passed']
             });
             console.log('Created success issue for SonarQube analysis');
+
+      # Create Failed Issue
       - name: Create PASSED Issue
         if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
         uses: actions/github-script@v7
