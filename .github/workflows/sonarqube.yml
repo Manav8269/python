@@ -15,6 +15,7 @@ env:
   NODE_VERSION: '18'
   SONAR_SCANNER_VERSION: "5.0.1.3006"
   MIN_COVERAGE_THRESHOLD: 80
+  COMPLETION_URL: "https://manav8269.github.io/python/"
 
 jobs:
   analyze:
@@ -368,3 +369,18 @@ jobs:
               labels: issueLabels
             });
             console.log('Created issue for SonarQube analysis.');
+
+      # Trigger external URL after completion
+      - name: Trigger External URL
+        if: always() # This ensures the step runs regardless of previous step success/failure
+        run: |
+          echo "Analysis complete. Triggering external URL: ${{ env.COMPLETION_URL }}"
+          curl -s -o /dev/null -w "%{http_code}" "${{ env.COMPLETION_URL }}" || echo "URL triggered, but received non-success response"
+          
+      # Add link to summary
+      - name: Add Result Link to Summary
+        if: always()
+        run: |
+          echo "## 🔗 Analysis Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View detailed results at: [${{ env.COMPLETION_URL }}](${{ env.COMPLETION_URL }})" >> $GITHUB_STEP_SUMMARY
