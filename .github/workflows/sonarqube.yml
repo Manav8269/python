@@ -214,6 +214,22 @@ jobs:
           echo "Sonar Host URL: ${{ secrets.SONAR_HOST_URL }}"
           echo "Sonar Project Key: ${{ env.SONAR_PROJECT_KEY }}"
       
+      # Add dedicated code coverage popup
+      - name: Show Code Coverage Popup
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const coverage = parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}' || '0').toFixed(2);
+            const threshold = ${{ env.MIN_COVERAGE_THRESHOLD }};
+            
+            if (coverage >= threshold) {
+              core.notice(`📊 Code Coverage: ${coverage}% (Passes threshold: ${threshold}%)`, {title: 'Coverage Report'});
+            } else {
+              core.warning(`📊 Code Coverage: ${coverage}% (Below threshold: ${threshold}%)`, {title: 'Coverage Report'});
+            }
+      
       # Create Success Summary for GitHub Actions UI
       - name: Create Success Summary
         if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
