@@ -225,9 +225,9 @@ jobs:
             const threshold = ${{ env.MIN_COVERAGE_THRESHOLD }};
             
             if (coverage >= threshold) {
-              core.notice(`📊 Code Coverage: ${coverage}% (Passes threshold: ${threshold}%)`, {title: 'Coverage Report'});
+              core.notice(`📊 Code Coverage Report: ${coverage}% (Passes threshold: ${threshold}%)`, {title: 'Coverage Results'});
             } else {
-              core.warning(`📊 Code Coverage: ${coverage}% (Below threshold: ${threshold}%)`, {title: 'Coverage Report'});
+              core.warning(`📊 Code Coverage Report: ${coverage}% (Below threshold: ${threshold}%)`, {title: 'Coverage Results'});
             }
       
       # Create Success Summary for GitHub Actions UI
