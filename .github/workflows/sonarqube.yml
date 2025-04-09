@@ -5,7 +5,6 @@ on:
   pull_request:
     branches: [main]
 
-# (Environment variables remain unchanged)
 env:
   SONAR_PROJECT_KEY: ${{ github.repository_owner }}_${{ github.event.repository.name }}
   SONAR_PROJECT_NAME: ${{ github.repository }}
@@ -29,55 +28,61 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      # (All previous steps remain unchanged until conditions are compared)
+      # (All setup and scan steps remain unchanged)
 
-      # Updated comparison logic
-      - name: Create Success Summary
-        if: ${{ steps.sonarqube.outputs.sonar_exit_code == '0' && fromJson(steps.sonarqube.outputs.coverage_percent) >= fromJson(env.MIN_COVERAGE_THRESHOLD) }}
-        run: |
-          echo "## ✅ Code Approved: Coverage ${{ steps.sonarqube.outputs.coverage_percent }}% meets threshold!" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Coverage:** ${{ steps.sonarqube.outputs.coverage_percent }}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "🔗 [View Full SonarQube Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})" >> $GITHUB_STEP_SUMMARY
-
-      - name: Create Failure Summary
-        if: ${{ steps.sonarqube.outputs.sonar_exit_code != '0' || fromJson(steps.sonarqube.outputs.coverage_percent) < fromJson(env.MIN_COVERAGE_THRESHOLD) }}
-        run: |
-          echo "## ⚠️ Code Coverage Below Threshold: ${{ steps.sonarqube.outputs.coverage_percent }}%" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Coverage:** ${{ steps.sonarqube.outputs.coverage_percent }}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Please improve test coverage before merging!" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "🔗 [View Analysis Results](${{ env.COMPLETION_URL }})" >> $GITHUB_STEP_SUMMARY
-
-      - name: Show Success Popup
-        if: ${{ steps.sonarqube.outputs.sonar_exit_code == '0' && fromJson(steps.sonarqube.outputs.coverage_percent) >= fromJson(env.MIN_COVERAGE_THRESHOLD) }}
+      # Show Success or Failure Popup (handles condition internally)
+      - name: Evaluate SonarQube Result
+        if: always()
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            core.notice(`✅ Code Coverage: ${parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}').toFixed(2)}% - Passed Threshold!`, {title: 'SonarQube Check Success'})
+            const exitCode = '${{ steps.sonarqube.outputs.sonar_exit_code }}';
+            const rawCoverage = '${{ steps.sonarqube.outputs.coverage_percent }}';
+            const threshold = parseFloat('${{ env.MIN_COVERAGE_THRESHOLD }}');
+            const coverage = parseFloat(rawCoverage || '0');
 
-      - name: Show Failure Popup
-        if: ${{ steps.sonarqube.outputs.sonar_exit_code != '0' || fromJson(steps.sonarqube.outputs.coverage_percent) < fromJson(env.MIN_COVERAGE_THRESHOLD) }}
+            if (exitCode === '0' && coverage >= threshold) {
+              core.notice(`✅ Code Coverage: ${coverage.toFixed(2)}% - Passed Threshold!`, { title: 'SonarQube Check Success' });
+            } else {
+              core.error(`⚠️ Code Coverage: ${coverage.toFixed(2)}% - Below Threshold of ${threshold}%`, { title: 'SonarQube Check Failed' });
+            }
+
+      # Generate Dynamic Summary (inside script block)
+      - name: Write Summary
+        if: always()
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            core.error(`⚠️ Code Coverage: ${parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}').toFixed(2)}% - Below Threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%`, {title: 'SonarQube Check Failed'})
+            const exitCode = '${{ steps.sonarqube.outputs.sonar_exit_code }}';
+            const rawCoverage = '${{ steps.sonarqube.outputs.coverage_percent }}';
+            const threshold = parseFloat('${{ env.MIN_COVERAGE_THRESHOLD }}');
+            const coverage = parseFloat(rawCoverage || '0');
 
-      # You should also update all similar conditional steps (e.g., PR comments, issue creation)
-      # using `fromJson(...)` for numeric comparisons
+            const repo = '${{ github.repository }}';
+            const branch = '${{ github.ref_name }}';
+            const commit = '${{ github.sha }}';
+            const summaryLines = [];
 
-      # Add Result Link to Summary (unchanged)
+            if (exitCode === '0' && coverage >= threshold) {
+              summaryLines.push("## ✅ Code Approved: Coverage " + coverage.toFixed(2) + "% meets threshold!");
+            } else {
+              summaryLines.push("## ⚠️ Code Coverage Below Threshold: " + coverage.toFixed(2) + "%");
+              summaryLines.push("Please improve test coverage before merging!");
+            }
+
+            summaryLines.push("");
+            summaryLines.push(`**Repository:** ${repo}`);
+            summaryLines.push(`**Branch:** ${branch}`);
+            summaryLines.push(`**Commit:** ${commit}`);
+            summaryLines.push(`**Coverage:** ${coverage.toFixed(2)}% (Threshold: ${threshold}%)`);
+            summaryLines.push("");
+            summaryLines.push(`🔗 [View Full SonarQube Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})`);
+
+            const fs = require('fs');
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summaryLines.join("\n") + "\n");
+
       - name: Add Result Link to Summary
         if: always()
         run: |
