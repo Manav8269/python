@@ -334,8 +334,8 @@ jobs:
               labels: ['quality-gate-success', 'high-coverage', 'code-passed']
             });
             console.log('Created success issue for SonarQube analysis');
-      # Create Failed Issue
-      - name: Create PASSED Issue
+      # Create Failed Issue - Fixed the name from "Create PASSED Issue" to "Create Failed Issue"
+      - name: Create Failed Issue
         if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
         uses: actions/github-script@v7
         with:
