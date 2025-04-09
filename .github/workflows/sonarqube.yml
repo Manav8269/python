@@ -248,7 +248,7 @@ jobs:
       - name: Create Failure Summary
         if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
         run: |
-          echo "## ⚠️ Code Coverage : ${{ steps.sonarqube.outputs.coverage_percent }}%" >> $GITHUB_STEP_SUMMARY
+          echo "## ⚠️ Code Coverage Below Threshold: ${{ steps.sonarqube.outputs.coverage_percent }}%" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
           echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
@@ -364,7 +364,7 @@ jobs:
             let issueLabels = [];
             if (exitCode !== '0') {
               failureReason = 'SonarQube analysis execution failed.';
-              issueTitle = `⚠️ SonarQube Analysis  - Exit Code: ${exitCode}`;
+              issueTitle = `⚠️ SonarQube Analysis Failed - Exit Code: ${exitCode}`;
               issueLabels = ['quality-gate-failure', 'needs-attention', 'sonarqube-failure'];
             } else if (coverage < ${{ env.MIN_COVERAGE_THRESHOLD }}) {
               failureReason = `Code coverage (${coverage}%) is below the minimum threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%.`;
