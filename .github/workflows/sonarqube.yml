@@ -7,6 +7,12 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+env:
+  # Set default values for environment variables
+  MIN_COVERAGE_THRESHOLD: 70  # Adjust as needed
+  SONAR_PROJECT_KEY: "your-organization_your-repo"  # Replace with your actual project key
+  PYTHON_PROJECT: "false"  # Set to "true" for Python projects
+
 jobs:
   sonarqube-analysis:
     runs-on: ubuntu-latest
@@ -14,24 +20,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
-
+          fetch-depth: 0  # Important for SonarQube to get all history
+          
       - name: Set up SonarQube Scanner
         uses: SonarSource/sonarqube-scan-action@master
         env:
-          SONAR_SCANNER_HOME: ${{ github.workspace }}/.sonar/scanner
-          
-      - name: SonarQube Analysis
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          # Additional arguments for the sonarqube scanner
+          args: >
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
+            -Dsonar.projectName=${{ github.repository }}
+            -Dsonar.projectVersion=1.0
+            -Dsonar.sources=.
+            -Dsonar.forceAuthentication=true
+            -Dsonar.organization=your-organization  # Required for SonarCloud
+            -Dsonar.token=${{ secrets.SONAR_TOKEN }}
+
+      - name: Calculate Code Coverage
         id: sonarqube
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          echo "Running SonarQube analysis..."
-          export SONAR_SCANNER_OPTS="-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv6Addresses=false -Dsonar.forceAuthentication=true -Dsonar.network.timeout=300000 -Dsonar.download.timeout=300000"
-          $SONAR_SCANNER_HOME/bin/sonar-scanner -X
-          SONAR_EXIT_CODE=$?
-          echo "sonar_exit_code=$SONAR_EXIT_CODE" >> $GITHUB_OUTPUT
+          echo "Running coverage calculation..."
           COVERAGE_PERCENT=0
           if [ "$PYTHON_PROJECT" == "true" ] && [ -f "coverage.xml" ]; then
             COVERAGE_LINE=$(grep -o 'line-rate="[0-9.]*"' coverage.xml | head -1 || echo 'line-rate="0"')
@@ -53,6 +67,7 @@ jobs:
           THRESHOLD_INT=$(echo "${{ env.MIN_COVERAGE_THRESHOLD }} * 100" | bc | cut -d. -f1)
           echo "coverage_int=$COVERAGE_INT" >> $GITHUB_OUTPUT
           echo "threshold_int=$THRESHOLD_INT" >> $GITHUB_OUTPUT
+          echo "sonar_exit_code=0" >> $GITHUB_OUTPUT  # Assume success since we're separating the steps
           echo "Minimum coverage threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%"
 
       - name: Show Code Coverage Popup
@@ -94,7 +109,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Please improve test coverage before merging!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "🔗 [View Analysis Results](${{ env.COMPLETION_URL }})" >> $GITHUB_STEP_SUMMARY
+          echo "🔗 [View Analysis Results](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})" >> $GITHUB_STEP_SUMMARY
 
       - name: Show Success Popup
         if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_int >= steps.sonarqube.outputs.threshold_int
