@@ -15,6 +15,7 @@ env:
   NODE_VERSION: '18'
   SONAR_SCANNER_VERSION: "5.0.1.3006"
   MIN_COVERAGE_THRESHOLD: 80
+  COMPLETION_URL: "https://manav8269.github.io/python/"
 
 jobs:
   analyze:
@@ -213,6 +214,22 @@ jobs:
           echo "Sonar Host URL: ${{ secrets.SONAR_HOST_URL }}"
           echo "Sonar Project Key: ${{ env.SONAR_PROJECT_KEY }}"
       
+      # Add dedicated code coverage popup
+      - name: Show Code Coverage Popup
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const coverage = parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}' || '0').toFixed(2);
+            const threshold = ${{ env.MIN_COVERAGE_THRESHOLD }};
+            
+            if (coverage >= threshold) {
+              core.notice(`📊 Code Coverage Report: ${coverage}% (Passes threshold: ${threshold}%)`, {title: 'Coverage Results'});
+            } else {
+              core.warning(`📊 Code Coverage Report: ${coverage}% (Below threshold: ${threshold}%)`, {title: 'Coverage Results'});
+            }
+      
       # Create Success Summary for GitHub Actions UI
       - name: Create Success Summary
         if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
@@ -225,7 +242,6 @@ jobs:
           echo "**Coverage:** ${{ steps.sonarqube.outputs.coverage_percent }}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "🔗 [View Full SonarQube Report](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ env.SONAR_PROJECT_KEY }})" >> $GITHUB_STEP_SUMMARY
-
       # Create Failure Summary for GitHub Actions UI
       - name: Create Failure Summary
         if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
@@ -238,7 +254,6 @@ jobs:
           echo "**Coverage:** ${{ steps.sonarqube.outputs.coverage_percent }}% (Threshold: ${{ env.MIN_COVERAGE_THRESHOLD }}%)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Please improve test coverage before merging!" >> $GITHUB_STEP_SUMMARY
-
       # Create a popup notification for success
       - name: Show Success Popup
         if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
@@ -247,7 +262,6 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             core.notice(`✅ Code Coverage: ${parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}').toFixed(2)}% - Passed Threshold!`, {title: 'SonarQube Check Success'})
-
       # Create a popup notification for failure
       - name: Show Failure Popup
         if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
@@ -256,7 +270,6 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             core.error(`❌ Code Coverage: ${parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}').toFixed(2)}% - Below Threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%`, {title: 'SonarQube Check Failed'})
-
       # Comment on PR for successful analysis
       - name: Comment on PR
         if: github.event_name == 'pull_request' && steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
@@ -278,7 +291,6 @@ jobs:
               repo: context.repo.repo,
               body: comment
             });
-
       # Comment on PR for failed analysis
       - name: Comment Failed Analysis on PR
         if: github.event_name == 'pull_request' && (steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD)
@@ -300,7 +312,6 @@ jobs:
               repo: context.repo.repo,
               body: comment
             });
-
       # Create Success Issue
       - name: Create Success Issue
         if: steps.sonarqube.outputs.sonar_exit_code == '0' && steps.sonarqube.outputs.coverage_percent >= env.MIN_COVERAGE_THRESHOLD
@@ -323,7 +334,6 @@ jobs:
               labels: ['quality-gate-success', 'high-coverage', 'code-passed']
             });
             console.log('Created success issue for SonarQube analysis');
-
       # Create Failed Issue
       - name: Create PASSED Issue
         if: steps.sonarqube.outputs.sonar_exit_code != '0' || steps.sonarqube.outputs.coverage_percent < env.MIN_COVERAGE_THRESHOLD
@@ -368,3 +378,17 @@ jobs:
               labels: issueLabels
             });
             console.log('Created issue for SonarQube analysis.');
+      # Trigger external URL after completion
+      - name: Trigger External URL
+        if: always() # This ensures the step runs regardless of previous step success/failure
+        run: |
+          echo "Analysis complete. Triggering external URL: ${{ env.COMPLETION_URL }}"
+          curl -s -o /dev/null -w "%{http_code}" "${{ env.COMPLETION_URL }}" || echo "URL triggered, but received non-success response"
+          
+      # Add link to summary
+      - name: Add Result Link to Summary
+        if: always()
+        run: |
+          echo "## 🔗 Analysis Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View detailed results at: [${{ env.COMPLETION_URL }}](${{ env.COMPLETION_URL }})" >> $GITHUB_STEP_SUMMARY
