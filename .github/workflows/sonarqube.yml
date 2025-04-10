@@ -271,29 +271,6 @@ jobs:
           script: |
             core.error(`❌ Code Coverage: ${parseFloat('${{ steps.sonarqube.outputs.coverage_percent }}').toFixed(2)}% - Below Threshold of ${{ env.MIN_COVERAGE_THRESHOLD }}%`, {title: 'SonarQube Check Failed'})
 
-
-      - name: Show Success Popup
-        if: steps.coverage_check.outputs.coverage_meets_threshold == 'true'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const coverage = '${{ steps.sonarqube.outputs.coverage_percent }}';
-            core.notice(`✅ Code Coverage Passed: ${coverage}%`, {
-              title: 'SonarQube Analysis Success'
-            });
-
-      - name: Show Failure Popup
-        if: steps.coverage_check.outputs.coverage_meets_threshold != 'true'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const coverage = '${{ steps.sonarqube.outputs.coverage_percent }}';
-            const threshold = '${{ env.MIN_COVERAGE_THRESHOLD }}';
-            core.error(`❌ Coverage ${coverage}% is below the required threshold of ${threshold}%`, {
-              title: 'SonarQube Coverage Check Failed'
-            });
       # Comment on PR for successful analysis
       - name: Comment on PR
         if: github.event_name == 'pull_request' && steps.sonarqube.outputs.sonar_exit_code == '0' && steps.coverage_check.outputs.coverage_meets_threshold == 'true'
